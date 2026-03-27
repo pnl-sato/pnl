@@ -374,39 +374,52 @@ def transcribe_with_gemini(
         )
 
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
     except ImportError:
         raise ImportError(
-            "google-generativeai が未インストールです。\n"
-            "pip install google-generativeai を実行してください。"
+            "google-genai が未インストールです。\n"
+            "pip install google-genai を実行してください。"
         )
 
-    genai.configure(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY)
     txt_path = out_dir / f"{m4a_path.stem}_transcript.txt"
 
     log.info("Gemini 文字起こし開始: %s", m4a_path.name)
 
     # ファイルを Gemini File API にアップロード
     log.info("音声ファイルをアップロード中...")
-    audio_file = genai.upload_file(str(m4a_path), mime_type="audio/mp4")
+    audio_file = client.files.upload(
+        file=m4a_path,
+        config=types.UploadFileConfig(mime_type="audio/mp4", display_name=m4a_path.name),
+    )
 
     # 処理完了まで待機（通常数秒〜数十秒）
     while audio_file.state.name == "PROCESSING":
         log.info("Gemini がファイルを処理中...")
         time.sleep(5)
-        audio_file = genai.get_file(audio_file.name)
+        audio_file = client.files.get(name=audio_file.name)
 
     if audio_file.state.name != "ACTIVE":
         raise RuntimeError(f"Gemini ファイル処理失敗: state={audio_file.state.name}")
 
     # 文字起こし実行（選択プロンプト > TRANSCRIPT_PROMPT_FILE > デフォルト）
     prompt = prompt_override if prompt_override is not None else _load_transcript_prompt()
-    model = genai.GenerativeModel(GEMINI_MODEL)
-    response = model.generate_content([audio_file, prompt])
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[
+            types.Content(parts=[
+                types.Part(file_data=types.FileData(
+                    file_uri=audio_file.uri, mime_type="audio/mp4"
+                )),
+                types.Part(text=prompt),
+            ])
+        ],
+    )
 
     # アップロードしたファイルを削除（48時間で自動削除されるが明示的に削除）
     try:
-        genai.delete_file(audio_file.name)
+        client.files.delete(name=audio_file.name)
     except Exception:
         pass
 
