@@ -4,19 +4,23 @@
 
 Blackholeで録画した .mov ファイルを監視し、以下を自動実行：
 1. ffmpeg で圧縮 mp4 + m4a 音声ファイルを生成
-2. mp4 を YouTube に自動アップロード（アーカイブ）
-3. m4a を出力フォルダへ配置（NotebookLM アップロード用）
+2. YouTube アップロード（mp4 アーカイブ）と Gemini 文字起こし（txt 出力）を並列実行
+3. m4a・txt を出力フォルダへ配置（NotebookLM アップロード用）
 
 watch モードのフロー:
   1. 新規 .mov を検知 → macOS 通知 + ターミナルにメッセージ表示
   2. Finder でファイル名を整える（例: 20240327_山田太郎_候補者面談.mov）
      ※ このファイル名が YouTube タイトルにそのまま使われる
-  3. Enter を押すと処理開始（変換 → YouTube アップロード）
+  3. Enter を押すと処理開始
+     - ffmpeg 変換（mp4 + m4a）
+     - [並列] YouTube アップロード ＋ Gemini 文字起こし → txt 保存
 
 必要な準備:
   brew install ffmpeg
   pip install -r requirements.txt
-  .env に YOUTUBE_CLIENT_SECRETS_FILE を設定（初回のみブラウザ認証が走る）
+  .env に以下を設定:
+    YOUTUBE_CLIENT_SECRETS_FILE  （初回のみブラウザ認証が走る）
+    GEMINI_API_KEY               （https://aistudio.google.com/app/apikey）
 
 使い方:
   # フォルダ監視（録画フォルダを指定）
@@ -24,9 +28,13 @@ watch モードのフロー:
 
   # 単体処理（ファイル名を整えてから実行）
   python video_processor.py process ~/Movies/20240327_山田太郎_候補者面談.mov
+
+  # 文字起こしのみ（YouTube スキップ）
+  python video_processor.py --no-youtube process ~/Movies/rec.mov
 """
 
 import argparse
+import concurrent.futures
 import json
 import logging
 import os
@@ -71,6 +79,13 @@ AUDIO_BITRATE = os.getenv("AUDIO_BITRATE", "64k")
 
 # 処理済みファイルの記録（二重処理防止）
 PROCESSED_LOG = os.getenv("PROCESSED_LOG", "~/.video_processor_done.json")
+
+# Gemini API キー（文字起こし用）
+# https://aistudio.google.com/app/apikey で取得
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+# 文字起こしに使用する Gemini モデル
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 
 # ─── ffmpeg 処理 ──────────────────────────────────────────────────────────────
@@ -229,14 +244,101 @@ def is_processed(mov_path: Path) -> bool:
     return str(mov_path.resolve()) in _load_processed()
 
 
-def mark_processed(mov_path: Path, youtube_id: str, m4a_path: Path) -> None:
+def mark_processed(
+    mov_path: Path, youtube_id: str, m4a_path: Path, transcript_path: Path | None
+) -> None:
     data = _load_processed()
     data[str(mov_path.resolve())] = {
         "processed_at": datetime.now().isoformat(),
         "youtube_id": youtube_id,
         "m4a_path": str(m4a_path),
+        "transcript_path": str(transcript_path) if transcript_path else "",
     }
     _save_processed(data)
+
+
+# ─── Gemini 文字起こし ────────────────────────────────────────────────────────
+
+# 文字起こしプロンプト
+_TRANSCRIPT_PROMPT = """\
+この音声ファイルを文字起こししてください。
+
+ルール:
+- 話者が複数いる場合は「【話者A】」「【話者B】」のように区別してください
+- 固有名詞（人名・企業名・サービス名）はそのまま記載してください
+- フィラー（「えー」「あのー」など）は省略して構いません
+- 聞き取れなかった箇所は「（聞き取り不可）」と記載してください
+- 文字起こし以外の説明文・コメントは不要です。本文のみ出力してください
+"""
+
+
+def transcribe_with_gemini(m4a_path: Path, out_dir: Path) -> Path:
+    """
+    Gemini API で m4a を文字起こしし、テキストファイルに保存する。
+
+    Args:
+        m4a_path: 文字起こし対象の音声ファイル
+        out_dir:  出力先ディレクトリ
+
+    Returns:
+        保存したテキストファイルのパス
+    """
+    if not GEMINI_API_KEY:
+        raise ValueError(
+            "GEMINI_API_KEY が設定されていません。\n"
+            "https://aistudio.google.com/app/apikey で取得し .env に設定してください。"
+        )
+
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        raise ImportError(
+            "google-generativeai が未インストールです。\n"
+            "pip install google-generativeai を実行してください。"
+        )
+
+    genai.configure(api_key=GEMINI_API_KEY)
+    txt_path = out_dir / f"{m4a_path.stem}_transcript.txt"
+
+    log.info("Gemini 文字起こし開始: %s", m4a_path.name)
+
+    # ファイルを Gemini File API にアップロード
+    log.info("音声ファイルをアップロード中...")
+    audio_file = genai.upload_file(str(m4a_path), mime_type="audio/mp4")
+
+    # 処理完了まで待機（通常数秒〜数十秒）
+    while audio_file.state.name == "PROCESSING":
+        log.info("Gemini がファイルを処理中...")
+        time.sleep(5)
+        audio_file = genai.get_file(audio_file.name)
+
+    if audio_file.state.name != "ACTIVE":
+        raise RuntimeError(f"Gemini ファイル処理失敗: state={audio_file.state.name}")
+
+    # 文字起こし実行
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    response = model.generate_content([audio_file, _TRANSCRIPT_PROMPT])
+
+    # アップロードしたファイルを削除（48時間で自動削除されるが明示的に削除）
+    try:
+        genai.delete_file(audio_file.name)
+    except Exception:
+        pass
+
+    transcript = response.text.strip()
+
+    # ヘッダーを付けて保存
+    header = (
+        f"# 文字起こし\n"
+        f"# ファイル : {m4a_path.name}\n"
+        f"# 作成日時 : {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        f"# モデル  : {GEMINI_MODEL}\n"
+        f"{'─' * 60}\n\n"
+    )
+    txt_path.write_text(header + transcript, encoding="utf-8")
+    log.info("文字起こし完了: %s", txt_path.name)
+
+    return txt_path
 
 
 # ─── タイトル生成 ─────────────────────────────────────────────────────────────
@@ -257,8 +359,16 @@ def build_youtube_title(mov_path: Path) -> str:
 
 # ─── メイン処理 ───────────────────────────────────────────────────────────────
 
-def process_file(mov_path: Path, skip_youtube: bool = False) -> None:
-    """1つの .mov ファイルを処理する。"""
+def process_file(
+    mov_path: Path,
+    skip_youtube: bool = False,
+    skip_transcribe: bool = False,
+) -> None:
+    """
+    1つの .mov ファイルを処理する。
+
+    変換完了後、YouTube アップロードと Gemini 文字起こしを並列実行する。
+    """
     mov_path = mov_path.resolve()
 
     if not mov_path.exists():
@@ -275,43 +385,70 @@ def process_file(mov_path: Path, skip_youtube: bool = False) -> None:
         out_dir = mov_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. ffmpeg 変換
+    # 1. ffmpeg 変換（逐次：mp4 と m4a が揃ってから次へ）
     mp4_path, m4a_path = convert_mov_to_mp4_and_m4a(mov_path, out_dir)
 
-    # 2. YouTube アップロード
+    # 2. YouTube アップロード と Gemini 文字起こし を並列実行
     youtube_id = ""
-    if not skip_youtube:
+    transcript_path: Path | None = None
+
+    def _youtube_task() -> str:
+        if skip_youtube:
+            return ""
         title = build_youtube_title(mov_path)
         try:
-            youtube_id = upload_to_youtube(mp4_path, title)
+            return upload_to_youtube(mp4_path, title)
         except FileNotFoundError as e:
             log.warning("YouTube スキップ（認証ファイルなし）: %s", e)
         except Exception as e:
             log.error("YouTube アップロード失敗: %s", e)
+        return ""
+
+    def _transcribe_task() -> Path | None:
+        if skip_transcribe or not GEMINI_API_KEY:
+            if not skip_transcribe and not GEMINI_API_KEY:
+                log.warning("GEMINI_API_KEY 未設定のため文字起こしをスキップします")
+            return None
+        try:
+            return transcribe_with_gemini(m4a_path, out_dir)
+        except Exception as e:
+            log.error("文字起こし失敗: %s", e)
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        future_youtube = executor.submit(_youtube_task)
+        future_transcript = executor.submit(_transcribe_task)
+        youtube_id = future_youtube.result()
+        transcript_path = future_transcript.result()
 
     # 3. 処理済み記録
-    mark_processed(mov_path, youtube_id, m4a_path)
+    mark_processed(mov_path, youtube_id, m4a_path, transcript_path)
 
     # 4. 完了通知
     print("\n" + "=" * 60)
     print("処理完了!")
-    print(f"  元ファイル : {mov_path}")
-    print(f"  mp4 (圧縮): {mp4_path}")
-    print(f"  m4a (音声): {m4a_path}")
+    print(f"  元ファイル  : {mov_path}")
+    print(f"  mp4 (圧縮) : {mp4_path}")
+    print(f"  m4a (音声) : {m4a_path}")
+    if transcript_path:
+        print(f"  文字起こし : {transcript_path}")
     if youtube_id:
-        print(f"  YouTube   : https://youtu.be/{youtube_id}")
-    print()
-    print("次のステップ: m4a を NotebookLM にアップロードしてください")
+        print(f"  YouTube    : https://youtu.be/{youtube_id}")
+    if not transcript_path:
+        print()
+        print("次のステップ: m4a を NotebookLM にアップロードしてください")
     print("=" * 60 + "\n")
 
-    # macOS の場合、m4a フォルダを Finder で開く
+    # macOS の場合、出力フォルダを Finder で開く
     if sys.platform == "darwin":
         subprocess.run(["open", str(out_dir)], check=False)
 
 
 # ─── フォルダ監視モード ───────────────────────────────────────────────────────
 
-def watch_folder(watch_dir: Path, skip_youtube: bool = False) -> None:
+def watch_folder(
+    watch_dir: Path, skip_youtube: bool = False, skip_transcribe: bool = False
+) -> None:
     """
     フォルダを監視し、新しい .mov が書き込み完了したらユーザーに通知する。
 
@@ -385,7 +522,9 @@ def watch_folder(watch_dir: Path, skip_youtube: bool = False) -> None:
             except queue.Empty:
                 continue
 
-            _notify_and_wait_for_rename(watch_dir, detected_path, skip_youtube)
+            _notify_and_wait_for_rename(
+                watch_dir, detected_path, skip_youtube, skip_transcribe
+            )
 
     except KeyboardInterrupt:
         log.info("監視を終了します")
@@ -395,7 +534,7 @@ def watch_folder(watch_dir: Path, skip_youtube: bool = False) -> None:
 
 
 def _notify_and_wait_for_rename(
-    watch_dir: Path, detected_path: Path, skip_youtube: bool
+    watch_dir: Path, detected_path: Path, skip_youtube: bool, skip_transcribe: bool = False
 ) -> None:
     """
     新規 .mov 検知後、ユーザーにファイル名整備を促し Enter 後に処理する。
@@ -461,7 +600,7 @@ def _notify_and_wait_for_rename(
                 return
 
     try:
-        process_file(target, skip_youtube=skip_youtube)
+        process_file(target, skip_youtube=skip_youtube, skip_transcribe=skip_transcribe)
     except Exception as e:
         log.error("処理失敗 %s: %s", target.name, e)
 
@@ -497,7 +636,11 @@ def main():
     )
     parser.add_argument(
         "--no-youtube", action="store_true",
-        help="YouTube アップロードをスキップ（変換のみ）"
+        help="YouTube アップロードをスキップ"
+    )
+    parser.add_argument(
+        "--no-transcribe", action="store_true",
+        help="Gemini 文字起こしをスキップ"
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
@@ -513,9 +656,17 @@ def main():
     args = parser.parse_args()
 
     if args.command == "process":
-        process_file(args.mov_file, skip_youtube=args.no_youtube)
+        process_file(
+            args.mov_file,
+            skip_youtube=args.no_youtube,
+            skip_transcribe=args.no_transcribe,
+        )
     elif args.command == "watch":
-        watch_folder(args.watch_dir, skip_youtube=args.no_youtube)
+        watch_folder(
+            args.watch_dir,
+            skip_youtube=args.no_youtube,
+            skip_transcribe=args.no_transcribe,
+        )
 
 
 if __name__ == "__main__":
