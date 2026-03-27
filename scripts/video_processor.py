@@ -59,6 +59,11 @@ YOUTUBE_PRIVACY = os.getenv("YOUTUBE_PRIVACY", "private")
 # mp4 圧縮品質（CRF: 小さいほど高画質。18〜28 が一般的。デフォルト 23）
 VIDEO_CRF = os.getenv("VIDEO_CRF", "23")
 
+# m4a 音声ビットレート（NotebookLM の 100MB 制限に収まるよう設定）
+# 面談・通話の文字起こし用途では 64k モノラルで品質十分
+# 64k mono: ~29 MB/時間 → 3時間まで余裕あり（128k stereo だと2時間超で制限超過）
+AUDIO_BITRATE = os.getenv("AUDIO_BITRATE", "64k")
+
 # 処理済みファイルの記録（二重処理防止）
 PROCESSED_LOG = os.getenv("PROCESSED_LOG", "~/.video_processor_done.json")
 
@@ -103,12 +108,15 @@ def convert_mov_to_mp4_and_m4a(mov_path: Path, output_dir: Path) -> tuple[Path, 
     ])
     log.info("mp4 生成完了: %s (%.1f MB)", mp4_path.name, mp4_path.stat().st_size / 1e6)
 
-    # m4a 抽出（音声のみ）
+    # m4a 抽出（音声のみ・モノラル）
+    # NotebookLM の 100MB 制限対策: モノラル + 64k = 約 29 MB/時間
+    # 面談・通話の文字起こし用途ではステレオ不要、品質に影響なし
     run_ffmpeg([
         "-i", str(mov_path),
         "-vn",
+        "-ac", "1",          # モノラルに変換（ファイルサイズを半減）
         "-c:a", "aac",
-        "-b:a", "128k",
+        "-b:a", AUDIO_BITRATE,
         str(m4a_path),
     ])
     log.info("m4a 生成完了: %s (%.1f MB)", m4a_path.name, m4a_path.stat().st_size / 1e6)
