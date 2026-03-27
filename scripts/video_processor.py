@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import logging
 import os
 import subprocess
@@ -103,7 +104,13 @@ TRANSCRIPT_PROMPT_DIR = os.getenv("TRANSCRIPT_PROMPT_DIR", "")
 
 def run_ffmpeg(args: list[str]) -> None:
     """ffmpeg コマンドを実行し、失敗時は例外を投げる。"""
-    cmd = ["ffmpeg", "-y"] + args
+    # launchd 経由の起動では PATH が限られるため明示的に解決する
+    ffmpeg_bin = (
+        shutil.which("ffmpeg")
+        or "/opt/homebrew/bin/ffmpeg"
+        or "/usr/local/bin/ffmpeg"
+    )
+    cmd = [ffmpeg_bin, "-y"] + args
     log.info("ffmpeg: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
