@@ -4,3 +4,8 @@ logs/
 __pycache__/
 *.pyc
 .venv/
+
+# GAS / Node.js
+node_modules/
+.clasp.json
+dist/
