@@ -5,4 +5,5 @@ python-dotenv>=1.0.0
 # video_processor.py
 google-api-python-client>=2.120.0
 google-auth-oauthlib>=1.2.0
+google-generativeai>=0.7.0
 watchdog>=4.0.0
