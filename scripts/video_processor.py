@@ -87,10 +87,15 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # 文字起こしに使用する Gemini モデル
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
-# 文字起こしプロンプトファイルのパス
-# 指定したテキストファイルの内容がプロンプトとして使われる
+# 文字起こしプロンプトファイルのパス（単一ファイル指定）
 # 未指定またはファイルが存在しない場合はデフォルトプロンプトを使用
 TRANSCRIPT_PROMPT_FILE = os.getenv("TRANSCRIPT_PROMPT_FILE", "")
+
+# 面談カテゴリ別プロンプトを格納するディレクトリ
+# ここに「候補者面談.txt」「打ち合わせ.txt」などを置くと
+# 処理開始前にカテゴリ選択メニューが表示される
+# TRANSCRIPT_PROMPT_FILE より優先される（選択した場合）
+TRANSCRIPT_PROMPT_DIR = os.getenv("TRANSCRIPT_PROMPT_DIR", "")
 
 
 # ─── ffmpeg 処理 ──────────────────────────────────────────────────────────────
@@ -282,9 +287,55 @@ _DEFAULT_TRANSCRIPT_PROMPT = """\
 """
 
 
+def _select_transcript_prompt() -> str | None:
+    """
+    TRANSCRIPT_PROMPT_DIR にある .txt ファイルをカテゴリ一覧として表示し、
+    ユーザーに選択させる。選択されたファイルの内容を返す。
+
+    - ディレクトリ未設定 / 空 / .txt ファイルなし の場合は None を返す（選択スキップ）
+    - 「s. スキップ」でデフォルトプロンプトにフォールバック
+    """
+    if not TRANSCRIPT_PROMPT_DIR:
+        return None
+
+    prompt_dir = Path(TRANSCRIPT_PROMPT_DIR).expanduser()
+    if not prompt_dir.exists():
+        log.warning("TRANSCRIPT_PROMPT_DIR が見つかりません: %s", prompt_dir)
+        return None
+
+    prompt_files = sorted(prompt_dir.glob("*.txt"))
+    if not prompt_files:
+        log.warning("TRANSCRIPT_PROMPT_DIR にプロンプトファイルがありません: %s", prompt_dir)
+        return None
+
+    print("\n面談カテゴリを選択してください:")
+    for i, f in enumerate(prompt_files, 1):
+        print(f"  {i}. {f.stem}")
+    print("  s. スキップ（デフォルトプロンプト）")
+
+    while True:
+        try:
+            raw = input("番号を入力: ").strip().lower()
+            if raw == "s":
+                log.info("カテゴリ選択スキップ → デフォルトプロンプトを使用")
+                return None
+            choice = int(raw)
+            if 1 <= choice <= len(prompt_files):
+                selected = prompt_files[choice - 1]
+                content = selected.read_text(encoding="utf-8").strip()
+                log.info("プロンプト選択: %s", selected.name)
+                return content
+            print(f"1〜{len(prompt_files)} または s を入力してください")
+        except (ValueError, EOFError):
+            pass
+        except KeyboardInterrupt:
+            log.info("カテゴリ選択キャンセル → デフォルトプロンプトを使用")
+            return None
+
+
 def _load_transcript_prompt() -> str:
     """
-    文字起こしプロンプトを返す。
+    文字起こしプロンプトを返す（非インタラクティブフォールバック）。
 
     TRANSCRIPT_PROMPT_FILE が設定されていてファイルが存在すればその内容を使う。
     それ以外はデフォルトプロンプトを返す。
@@ -302,7 +353,9 @@ def _load_transcript_prompt() -> str:
     return _DEFAULT_TRANSCRIPT_PROMPT
 
 
-def transcribe_with_gemini(m4a_path: Path, out_dir: Path) -> Path:
+def transcribe_with_gemini(
+    m4a_path: Path, out_dir: Path, prompt_override: str | None = None
+) -> Path:
     """
     Gemini API で m4a を文字起こしし、テキストファイルに保存する。
 
@@ -345,8 +398,8 @@ def transcribe_with_gemini(m4a_path: Path, out_dir: Path) -> Path:
     if audio_file.state.name != "ACTIVE":
         raise RuntimeError(f"Gemini ファイル処理失敗: state={audio_file.state.name}")
 
-    # 文字起こし実行
-    prompt = _load_transcript_prompt()
+    # 文字起こし実行（選択プロンプト > TRANSCRIPT_PROMPT_FILE > デフォルト）
+    prompt = prompt_override if prompt_override is not None else _load_transcript_prompt()
     model = genai.GenerativeModel(GEMINI_MODEL)
     response = model.generate_content([audio_file, prompt])
 
@@ -394,11 +447,13 @@ def process_file(
     mov_path: Path,
     skip_youtube: bool = False,
     skip_transcribe: bool = False,
+    prompt_override: str | None = None,
 ) -> None:
     """
     1つの .mov ファイルを処理する。
 
     変換完了後、YouTube アップロードと Gemini 文字起こしを並列実行する。
+    prompt_override が指定された場合、そのプロンプトで文字起こしを行う。
     """
     mov_path = mov_path.resolve()
 
@@ -441,7 +496,7 @@ def process_file(
                 log.warning("GEMINI_API_KEY 未設定のため文字起こしをスキップします")
             return None
         try:
-            return transcribe_with_gemini(m4a_path, out_dir)
+            return transcribe_with_gemini(m4a_path, out_dir, prompt_override=prompt_override)
         except Exception as e:
             log.error("文字起こし失敗: %s", e)
         return None
@@ -630,8 +685,18 @@ def _notify_and_wait_for_rename(
                 print("\nスキップしました。\n")
                 return
 
+    # 文字起こしを行う場合のみカテゴリ選択を表示
+    prompt_override = None
+    if not skip_transcribe and GEMINI_API_KEY:
+        prompt_override = _select_transcript_prompt()
+
     try:
-        process_file(target, skip_youtube=skip_youtube, skip_transcribe=skip_transcribe)
+        process_file(
+            target,
+            skip_youtube=skip_youtube,
+            skip_transcribe=skip_transcribe,
+            prompt_override=prompt_override,
+        )
     except Exception as e:
         log.error("処理失敗 %s: %s", target.name, e)
 
@@ -687,10 +752,14 @@ def main():
     args = parser.parse_args()
 
     if args.command == "process":
+        prompt_override = None
+        if not args.no_transcribe and GEMINI_API_KEY:
+            prompt_override = _select_transcript_prompt()
         process_file(
             args.mov_file,
             skip_youtube=args.no_youtube,
             skip_transcribe=args.no_transcribe,
+            prompt_override=prompt_override,
         )
     elif args.command == "watch":
         watch_folder(
