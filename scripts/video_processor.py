@@ -87,6 +87,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # 文字起こしに使用する Gemini モデル
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
+# 文字起こしプロンプトファイルのパス
+# 指定したテキストファイルの内容がプロンプトとして使われる
+# 未指定またはファイルが存在しない場合はデフォルトプロンプトを使用
+TRANSCRIPT_PROMPT_FILE = os.getenv("TRANSCRIPT_PROMPT_FILE", "")
+
 
 # ─── ffmpeg 処理 ──────────────────────────────────────────────────────────────
 
@@ -186,9 +191,12 @@ def _build_youtube_service():
     return build("youtube", "v3", credentials=creds)
 
 
-def upload_to_youtube(mp4_path: Path, title: str, description: str = "") -> str:
+def upload_to_youtube(video_path: Path, title: str, description: str = "") -> str:
     """
-    mp4 を YouTube にアップロードし、動画 ID を返す。
+    動画ファイルを YouTube にアップロードし、動画 ID を返す。
+
+    元の .mov をそのままアップロードすることで再エンコードによる画質劣化を防ぐ。
+    YouTube 側でトランスコードするため、投影資料のスクショ確認にも耐える品質を保てる。
 
     Returns:
         YouTube 動画 ID（例: "dQw4w9WgXcQ"）
@@ -209,9 +217,10 @@ def upload_to_youtube(mp4_path: Path, title: str, description: str = "") -> str:
         },
     }
 
-    media = MediaFileUpload(str(mp4_path), mimetype="video/mp4", resumable=True)
+    mime = "video/quicktime" if video_path.suffix.lower() == ".mov" else "video/mp4"
+    media = MediaFileUpload(str(video_path), mimetype=mime, resumable=True)
 
-    log.info("YouTube アップロード開始: %s", title)
+    log.info("YouTube アップロード開始: %s (%s)", title, video_path.name)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
@@ -259,8 +268,9 @@ def mark_processed(
 
 # ─── Gemini 文字起こし ────────────────────────────────────────────────────────
 
-# 文字起こしプロンプト
-_TRANSCRIPT_PROMPT = """\
+# デフォルトの文字起こしプロンプト
+# TRANSCRIPT_PROMPT_FILE でテキストファイルを指定するとそちらが優先される
+_DEFAULT_TRANSCRIPT_PROMPT = """\
 この音声ファイルを文字起こししてください。
 
 ルール:
@@ -270,6 +280,26 @@ _TRANSCRIPT_PROMPT = """\
 - 聞き取れなかった箇所は「（聞き取り不可）」と記載してください
 - 文字起こし以外の説明文・コメントは不要です。本文のみ出力してください
 """
+
+
+def _load_transcript_prompt() -> str:
+    """
+    文字起こしプロンプトを返す。
+
+    TRANSCRIPT_PROMPT_FILE が設定されていてファイルが存在すればその内容を使う。
+    それ以外はデフォルトプロンプトを返す。
+    """
+    if TRANSCRIPT_PROMPT_FILE:
+        prompt_path = Path(TRANSCRIPT_PROMPT_FILE).expanduser()
+        if prompt_path.exists():
+            prompt = prompt_path.read_text(encoding="utf-8").strip()
+            log.info("カスタムプロンプトを使用: %s", prompt_path)
+            return prompt
+        else:
+            log.warning(
+                "TRANSCRIPT_PROMPT_FILE が見つかりません: %s（デフォルトを使用）", prompt_path
+            )
+    return _DEFAULT_TRANSCRIPT_PROMPT
 
 
 def transcribe_with_gemini(m4a_path: Path, out_dir: Path) -> Path:
@@ -316,8 +346,9 @@ def transcribe_with_gemini(m4a_path: Path, out_dir: Path) -> Path:
         raise RuntimeError(f"Gemini ファイル処理失敗: state={audio_file.state.name}")
 
     # 文字起こし実行
+    prompt = _load_transcript_prompt()
     model = genai.GenerativeModel(GEMINI_MODEL)
-    response = model.generate_content([audio_file, _TRANSCRIPT_PROMPT])
+    response = model.generate_content([audio_file, prompt])
 
     # アップロードしたファイルを削除（48時間で自動削除されるが明示的に削除）
     try:
@@ -397,7 +428,7 @@ def process_file(
             return ""
         title = build_youtube_title(mov_path)
         try:
-            return upload_to_youtube(mp4_path, title)
+            return upload_to_youtube(mov_path, title)  # 元の mov をアップロード（画質保持）
         except FileNotFoundError as e:
             log.warning("YouTube スキップ（認証ファイルなし）: %s", e)
         except Exception as e:
