@@ -1,0 +1,4 @@
+# clasp push 時に GAS にアップロードしないファイル
+**/**
+!gas/**
+!gas/appsscript.json

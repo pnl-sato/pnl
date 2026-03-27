@@ -1,6 +1,8 @@
 .env
 scripts/linkedin_session.json
+scripts/sf_sync_state.json
 logs/
 __pycache__/
 *.pyc
 .venv/
+.clasp.json
