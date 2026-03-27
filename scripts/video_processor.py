@@ -36,7 +36,6 @@ watch モードのフロー:
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import json
 import logging
 import os
@@ -476,38 +475,27 @@ def process_file(
     # 1. ffmpeg 変換（逐次：mp4 と m4a が揃ってから次へ）
     mp4_path, m4a_path = convert_mov_to_mp4_and_m4a(mov_path, out_dir)
 
-    # 2. YouTube アップロード と Gemini 文字起こし を並列実行
+    # 2. YouTube アップロード → Gemini 文字起こし（順次実行）
+    # 並列実行は requests ライブラリのデッドロックを引き起こす場合があるため順次に変更
     youtube_id = ""
     transcript_path: Path | None = None
 
-    def _youtube_task() -> str:
-        if skip_youtube:
-            return ""
+    if not skip_youtube:
         title = build_youtube_title(mov_path)
         try:
-            return upload_to_youtube(mov_path, title)  # 元の mov をアップロード（画質保持）
+            youtube_id = upload_to_youtube(mov_path, title)
         except FileNotFoundError as e:
             log.warning("YouTube スキップ（認証ファイルなし）: %s", e)
         except Exception as e:
             log.error("YouTube アップロード失敗: %s", e)
-        return ""
 
-    def _transcribe_task() -> Path | None:
-        if skip_transcribe or not GEMINI_API_KEY:
-            if not skip_transcribe and not GEMINI_API_KEY:
-                log.warning("GEMINI_API_KEY 未設定のため文字起こしをスキップします")
-            return None
+    if not skip_transcribe and GEMINI_API_KEY:
         try:
-            return transcribe_with_gemini(m4a_path, out_dir, prompt_override=prompt_override)
+            transcript_path = transcribe_with_gemini(m4a_path, out_dir, prompt_override=prompt_override)
         except Exception as e:
             log.error("文字起こし失敗: %s", e)
-        return None
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        future_youtube = executor.submit(_youtube_task)
-        future_transcript = executor.submit(_transcribe_task)
-        youtube_id = future_youtube.result()
-        transcript_path = future_transcript.result()
+    elif not skip_transcribe and not GEMINI_API_KEY:
+        log.warning("GEMINI_API_KEY 未設定のため文字起こしをスキップします")
 
     # 3. 処理済み記録
     mark_processed(mov_path, youtube_id, m4a_path, transcript_path)
