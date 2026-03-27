@@ -66,9 +66,11 @@ function fetchWithRetry_(url, opt = {}, retries = RETRIES) {
     Logger.log(`HTTP ${code}: ${res.getContentText()}`);
     if (code === 200) return res;
 
-    // 認証・ルート不正は再試行しても無駄なので即終了
-    if (code === 401 || code === 403 || code === 404) {
-      throw new Error(`SwitchBot API fatal error ${code}`);
+    // 再試行しても意味のないエラーは即終了
+    // 429: レート制限（リトライすると悪化するだけ）
+    if (code === 401 || code === 403 || code === 404 || code === 429) {
+      const body = res.getContentText();
+      throw new Error(`SwitchBot API fatal error ${code}: ${body}`);
     }
     Utilities.sleep(RETRY_WAIT_MS);
   }
