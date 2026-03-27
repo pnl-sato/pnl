@@ -408,11 +408,14 @@ def transcribe_with_gemini(
     log.info("Gemini 文字起こし開始: %s", m4a_path.name)
 
     # ファイルを Gemini File API にアップロード
+    # Path オブジェクトを渡すと SDK がファイル名を内部で使い日本語エラーになるため
+    # バイナリで開いて渡す
     log.info("音声ファイルをアップロード中...")
-    audio_file = client.files.upload(
-        file=m4a_path,
-        config=types.UploadFileConfig(mime_type="audio/mp4"),
-    )
+    with open(m4a_path, "rb") as f:
+        audio_file = client.files.upload(
+            file=f,
+            config=types.UploadFileConfig(mime_type="audio/mp4"),
+        )
 
     # 処理完了まで待機（通常数秒〜数十秒）
     while audio_file.state.name == "PROCESSING":
