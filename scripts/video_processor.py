@@ -411,7 +411,7 @@ def transcribe_with_gemini(
     log.info("音声ファイルをアップロード中...")
     audio_file = client.files.upload(
         file=m4a_path,
-        config=types.UploadFileConfig(mime_type="audio/mp4", display_name=m4a_path.name),
+        config=types.UploadFileConfig(mime_type="audio/mp4"),
     )
 
     # 処理完了まで待機（通常数秒〜数十秒）
