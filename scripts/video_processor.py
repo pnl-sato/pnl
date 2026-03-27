@@ -86,7 +86,7 @@ PROCESSED_LOG = os.getenv("PROCESSED_LOG", "~/.video_processor_done.json")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # 文字起こしに使用する Gemini モデル
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # 文字起こしプロンプトファイルのパス（単一ファイル指定）
 # 未指定またはファイルが存在しない場合はデフォルトプロンプトを使用
