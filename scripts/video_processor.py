@@ -33,6 +33,8 @@ watch モードのフロー:
   python video_processor.py --no-youtube process ~/Movies/rec.mov
 """
 
+from __future__ import annotations
+
 import argparse
 import concurrent.futures
 import json
