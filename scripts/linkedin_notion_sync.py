@@ -129,108 +129,107 @@ def parse_linkedin_project(project_name: str) -> tuple[str, str] | None:
     return None
 
 
-async def get_today_sent_by_project(page: Page) -> dict[str, int]:
+async def get_all_project_names(page: Page) -> list[str]:
     """
-    LinkedIn Recruiter の InMail 送信済み一覧から
-    「今日送信した件数」をプロジェクト名別に集計する。
+    左サイドバー「プロジェクトごとのメッセージ」からプロジェクト名を全件取得する。
+    「プロジェクトをさらに読む」ボタンがあればクリックして展開する。
 
-    戻り値: {"セキュリティ統括責任者（CISO候補）-GFT": 12, "事業企画担当-GFT": 7, ...}
-
-    ─ セレクター調整について ─
-    LinkedIn Recruiter の UI は変更されることがあります。
-    うまく動かない場合は --debug で実行し、
-    生成される debug_inbox.html を確認してセレクターを修正してください。
+    画面構成（スクリーンショットより）:
+      左サイドバー
+        受信ボックス / 返信待ち / スケジュール済み / アーカイブ済み
+        ─ プロジェクトごとのメッセージ ─
+        [プロジェクトを検索]
+        CIO候補／医療PF-MDY
+        サイバーセキュリティ戦略...
+        事業企画担当-BST
+        ...
+        プロジェクトをさらに読む  ← これをクリックして全件取得
     """
-    today_str = date.today(tz=JST).strftime("%-m/%-d")   # 例: "3/27"
-    today_iso = date.today(tz=JST).isoformat()            # 例: "2026-03-27"
-    sent_counts: dict[str, int] = {}
+    # 「プロジェクトをさらに読む」を全部クリックして展開
+    while True:
+        load_more = page.get_by_text(re.compile(r"プロジェクトをさらに読む|Load more"))
+        if await load_more.count() > 0:
+            await load_more.first.click()
+            await page.wait_for_timeout(1000)
+        else:
+            break
 
-    # ① Sent InMail 画面へ移動
-    await page.goto(
-        "https://www.linkedin.com/talent/inbox?mailboxType=INMAIL",
-        wait_until="domcontentloaded",
+    # サイドバーのプロジェクトリンクを取得
+    # LinkedIn Recruiter のサイドバープロジェクト項目はリンク形式
+    # href に /talent/inbox が含まれ、テキストがプロジェクト名
+    project_links = await page.query_selector_all(
+        "a[href*='/talent/inbox'][href*='project'], "  # プロジェクトフィルター付きURL
+        ".msg-thread-filter__thread-filter-entity-link, "
+        "[data-control-name='project_filter_item']"
     )
-    await page.wait_for_load_state("networkidle", timeout=20_000)
 
-    # ② 「Sent」タブへ切り替え
-    try:
-        sent_tab = page.get_by_role("tab", name=re.compile(r"sent|送信済み", re.IGNORECASE))
-        if await sent_tab.count() > 0:
-            await sent_tab.first.click()
-            await page.wait_for_load_state("networkidle", timeout=10_000)
-    except Exception as e:
-        if DEBUG:
-            print(f"  [DEBUG] Sent タブ切り替え失敗（継続）: {e}")
+    names = []
+    for link in project_links:
+        name = (await link.inner_text()).strip()
+        if name and name not in ("プロジェクトをさらに読む", "Load more"):
+            names.append(name)
 
-    if DEBUG:
-        html = await page.content()
-        (Path(__file__).parent / "debug_inbox.html").write_text(html)
-        print("  [DEBUG] debug_inbox.html を保存しました")
+    if not names and DEBUG:
+        # フォールバック: サイドバー全体のテキストからプロジェクト名らしき行を抽出
+        sidebar = await page.query_selector(
+            ".msg-thread-filter, .scaffold-layout__sidebar, nav"
+        )
+        if sidebar:
+            text = await sidebar.inner_text()
+            print(f"  [DEBUG] サイドバーテキスト:\n{text[:1000]}")
 
-    # ③ メッセージスレッド一覧を走査
-    #    各スレッドに「プロジェクト名（ジョブタイトル）」と「日付」が表示されている前提
-    page_num = 0
-    stop = False
+    return names
 
-    while not stop:
-        page_num += 1
 
-        # スレッドのリストアイテムを取得
-        # ※ LinkedIn の UI 変更でセレクターが変わった場合はここを修正
+async def count_today_threads(page: Page, today_ja: str) -> int:
+    """
+    現在表示中のプロジェクトスレッド一覧で「今日の日付」のスレッド数を返す。
+
+    日付フォーマット: "3月27日"（月の先頭0なし）
+    スレッド一覧は新着順のため、今日より古い日付が出たら打ち切る。
+    """
+    count = 0
+
+    while True:
         rows = await page.query_selector_all(
             "li.msg-conversation-listitem, "
-            "[data-test-id='msg-conversation'], "
-            ".scaffold-finite-scroll__content > ul > li"
+            "[data-test-id='msg-conversation-listitem'], "
+            ".scaffold-finite-scroll__content li"
         )
 
         if not rows:
-            print(f"  ⚠️  スレッド要素が見つかりません（ページ {page_num}）")
             if DEBUG:
-                print("     --debug モードでは debug_inbox.html を確認してください")
+                html = await page.content()
+                (Path(__file__).parent / "debug_project.html").write_text(html)
+                print(f"  [DEBUG] スレッド要素なし → debug_project.html を保存")
             break
 
+        stop = False
         for row in rows:
             text = await row.inner_text()
             lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
-            # 今日の日付が含まれているか判定
-            is_today = any(today_str in ln or today_iso in ln for ln in lines)
-
-            # 今日より前の日付（例: "3/20", "2026/03/20"）が含まれていれば打ち切り
-            # ※ 一覧は新着順のため
-            date_lines = [ln for ln in lines if re.search(r"\d{1,2}/\d{1,2}", ln)]
-            is_older = any(
-                today_str not in ln and re.search(r"\d{1,2}/\d{1,2}", ln)
-                for ln in date_lines
+            # 日付行を探す（例: "3月27日"）
+            date_line = next(
+                (ln for ln in lines if re.search(r"\d{1,2}月\d{1,2}日", ln)), None
             )
-            if is_older and not is_today:
-                stop = True
-                break
-
-            if not is_today:
+            if not date_line:
                 continue
 
-            # プロジェクト名を抽出
-            # LinkedIn Recruiter では各スレッドに関連ジョブタイトルが表示される
-            # 「{ポジション名}-{コード}」形式の行を探す
-            project_name = None
-            for ln in lines:
-                if parse_linkedin_project(ln):
-                    project_name = ln
-                    break
-
-            if project_name:
-                sent_counts[project_name] = sent_counts.get(project_name, 0) + 1
+            if today_ja in date_line:
+                count += 1
                 if DEBUG:
-                    print(f"  [DEBUG] カウント: {project_name!r}")
+                    preview = lines[0] if lines else ""
+                    print(f"  [DEBUG]   ✓ 今日({today_ja}): {preview!r}")
             else:
-                if DEBUG:
-                    print(f"  [DEBUG] プロジェクト名未検出（行テキスト）: {lines}")
+                # 今日より古い → 以降はスキップ（新着順のため）
+                stop = True
+                break
 
         if stop:
             break
 
-        # 次ページ
+        # 次のページがあれば進む
         next_btn = page.get_by_role(
             "button", name=re.compile(r"next|次へ", re.IGNORECASE)
         )
@@ -239,6 +238,80 @@ async def get_today_sent_by_project(page: Page) -> dict[str, int]:
             await page.wait_for_load_state("networkidle", timeout=10_000)
         else:
             break
+
+    return count
+
+
+async def get_today_sent_by_project(page: Page) -> dict[str, int]:
+    """
+    左サイドバーの各プロジェクトをクリックし、
+    「今日送信したスレッド数（= 今日作成された新規スレッド数）」を集計する。
+
+    戻り値: {"事業企画担当-BST": 7, "セキュリティ統括責任者（C...）-GFT": 12, ...}
+
+    ─ カウントのロジック ─
+    スレッド一覧の日付は「そのスレッドの最終メッセージ日時」。
+    今日スカウトを送った場合 → 新規スレッドが今日の日付で作成される。
+    候補者から今日返信が来た場合も今日の日付になるが、
+    通常スカウトの返信は翌日以降が多いためカウントへの影響は軽微。
+    """
+    today_ja = datetime.now(tz=JST).strftime("%-m月%-d日")  # 例: "3月27日"
+    sent_counts: dict[str, int] = {}
+
+    # ① InMail 受信ボックスへ移動
+    await page.goto(
+        "https://www.linkedin.com/talent/inbox?mailboxType=INMAIL",
+        wait_until="domcontentloaded",
+    )
+    await page.wait_for_load_state("networkidle", timeout=20_000)
+
+    if DEBUG:
+        html = await page.content()
+        (Path(__file__).parent / "debug_inbox.html").write_text(html)
+        print(f"  [DEBUG] debug_inbox.html を保存（今日の日付: {today_ja}）")
+
+    # ② プロジェクト一覧を取得
+    project_names = await get_all_project_names(page)
+    if not project_names:
+        print("  ⚠️  プロジェクトが見つかりません。--debug で debug_inbox.html を確認してください。")
+        return {}
+
+    print(f"  {len(project_names)} 件のプロジェクトを検出:")
+    for name in project_names:
+        print(f"    - {name!r}")
+
+    # ③ 各プロジェクトをクリックしてスレッド数をカウント
+    for project_name in project_names:
+        if DEBUG:
+            print(f"  [DEBUG] プロジェクト処理中: {project_name!r}")
+
+        # プロジェクトをクリック
+        try:
+            # 完全一致で探す（サイドバーのリンクテキスト）
+            link = page.get_by_role("link", name=re.compile(re.escape(project_name[:20])))
+            if await link.count() == 0:
+                # テキストで探す
+                link = page.get_by_text(project_name, exact=True)
+
+            if await link.count() > 0:
+                await link.first.click()
+                await page.wait_for_load_state("networkidle", timeout=10_000)
+                await page.wait_for_timeout(500)
+            else:
+                print(f"  ⚠️  クリックできません: {project_name!r}")
+                continue
+        except Exception as e:
+            print(f"  ⚠️  プロジェクトクリック失敗 ({project_name!r}): {e}")
+            continue
+
+        # 今日のスレッド数をカウント
+        today_count = await count_today_threads(page, today_ja)
+        if today_count > 0:
+            sent_counts[project_name] = today_count
+            print(f"  → {project_name!r}: {today_count} 件")
+        else:
+            if DEBUG:
+                print(f"  [DEBUG] {project_name!r}: 0 件（スキップ）")
 
     return sent_counts
 
