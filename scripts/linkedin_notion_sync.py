@@ -1,23 +1,31 @@
 """
-LinkedIn Recruiter 送信数 → Notion スカウトDB 同期スクリプト
+LinkedIn Recruiter 送信数 → Notion スカウトDB 加算同期スクリプト
 
 【概要】
-LinkedIn Recruiter の送信済みメッセージ履歴をスクレイピングし、
-Notion スカウトDB の「送信数」フィールドを上書き更新する。
+LinkedIn Recruiter のプロジェクト（ポジション）ごとに「今日送信したInMail数」を集計し、
+Notion スカウトDB の「送信数」フィールドに加算する。
+既存のデータは保持され、今日の分だけ上乗せされる。
 
 【前提】
-- LinkedIn Recruiter の「送信済み InMail」画面から件数を取得する
-- Notion スカウトDB の識別ID に含まれるポジションコード（例: GFT, BST）で紐付ける
+- LinkedIn Recruiter のプロジェクト名にポジションコードが含まれている
+  例: "GFT - セキュリティ統括責任者候補"、"BST_事業企画担当" など
+- Notion スカウトDB の 識別ID にポジションコードが含まれている
+  例: "GFT-CISO-v1"、"BST-BizDev-v2" など
 - 1日1回 cron で実行することを想定
 
 【初回セットアップ】
   pip install -r requirements.txt
   playwright install chromium
-  cp .env.example .env  # 編集して NOTION_TOKEN を設定
-  python linkedin_notion_sync.py --save-session  # ブラウザでログインしてセッション保存
+  cp .env.example .env          # NOTION_TOKEN を記入
+  python scripts/linkedin_notion_sync.py --save-session
 
-【定期実行（cron）例】
-  0 9 * * * cd /path/to/pnl && python scripts/linkedin_notion_sync.py >> logs/sync.log 2>&1
+【定期実行（cron）例】毎日22時に実行
+  0 22 * * * cd /path/to/pnl && python scripts/linkedin_notion_sync.py >> logs/sync.log 2>&1
+
+【手動実行・デバッグ】
+  python scripts/linkedin_notion_sync.py --debug    # ブラウザ表示あり
+  python scripts/linkedin_notion_sync.py --force    # 当日2回目でも強制実行
+  python scripts/linkedin_notion_sync.py --dry-run  # Notion を更新せず確認のみ
 """
 
 import asyncio
@@ -25,23 +33,25 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright
+from playwright.async_api import Page, async_playwright
 
 # ─── 設定 ────────────────────────────────────────────────────────────────────
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
-# Notion スカウトDB のデータベースページID（ダッシュなし形式 or UUID形式どちらでも可）
-# collection://2597d017-b6a0-801b-8185-000ba4b9661e に対応する database ID
 SCOUT_DB_ID = os.environ.get("SCOUT_DB_ID", "2597d017b6a0808ea499c4ec941d2a96")
 
 SESSION_FILE = Path(__file__).parent / "linkedin_session.json"
+STATE_FILE   = Path(__file__).parent / "sync_state.json"   # 二重実行防止用
+
+JST = ZoneInfo("Asia/Tokyo")
 
 NOTION_API = "https://api.notion.com/v1"
 NOTION_HEADERS = {
@@ -50,159 +60,243 @@ NOTION_HEADERS = {
     "Content-Type": "application/json",
 }
 
-# ─── LinkedIn スクレイピング ───────────────────────────────────────────────────
+DEBUG   = "--debug"   in sys.argv
+FORCE   = "--force"   in sys.argv
+DRY_RUN = "--dry-run" in sys.argv
 
-async def save_session():
-    """ブラウザを起動してログイン → セッションを保存する（初回のみ実行）"""
+
+# ─── 二重実行防止 ─────────────────────────────────────────────────────────────
+
+def load_state() -> dict:
+    if STATE_FILE.exists():
+        return json.loads(STATE_FILE.read_text())
+    return {}
+
+def save_state(today: str, added: dict[str, int]) -> None:
+    STATE_FILE.write_text(
+        json.dumps({"last_sync_date": today, "added_counts": added}, ensure_ascii=False, indent=2)
+    )
+
+def already_synced_today() -> bool:
+    state = load_state()
+    return state.get("last_sync_date") == date.today(tz=JST).isoformat()
+
+
+# ─── LinkedIn セッション保存（初回のみ） ─────────────────────────────────────
+
+async def save_session() -> None:
+    """ブラウザを起動して手動ログイン → セッションを保存する"""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=500)
         context = await browser.new_context()
         page = await context.new_page()
 
         print("=== LinkedIn にログインしてください ===")
-        print("ログイン完了後、LinkedIn Recruiter のトップページまで進めてください。")
+        print("LinkedIn Recruiter のトップページ（/talent/）まで進んだら自動保存されます。")
         await page.goto("https://www.linkedin.com/login")
-
-        # ユーザーが手動でログインするまで待機（最大5分）
         await page.wait_for_url("**/talent/**", timeout=300_000)
-        print("ログイン完了。セッションを保存します...")
 
         storage = await context.storage_state()
         SESSION_FILE.write_text(json.dumps(storage, ensure_ascii=False, indent=2))
-        print(f"セッション保存: {SESSION_FILE}")
-
+        print(f"✅ セッション保存: {SESSION_FILE}")
         await browser.close()
 
 
-async def scrape_sent_counts() -> dict[str, int]:
-    """
-    LinkedIn Recruiter の送信済みメッセージ数をポジションコード別に集計して返す。
+# ─── LinkedIn スクレイピング ───────────────────────────────────────────────────
 
-    Returns:
-        {ポジションコード: 送信数} の辞書
-        例: {"GFT": 45, "BST": 23, "MDY": 12}
-
-    【重要】
-    LinkedIn Recruiter の UI は変更される場合があります。
-    うまく取得できない場合は --debug フラグを使いセレクターを調整してください。
+def extract_code_from_project_name(name: str) -> str | None:
     """
+    LinkedIn Recruiter プロジェクト名からポジションコードを抽出する。
+
+    対応フォーマット例:
+      "GFT - セキュリティ統括責任者候補"   → "GFT"
+      "BST_事業企画担当"                   → "BST"
+      "MDY/介護領域COO候補"               → "MDY"
+      "【GFT】CISO候補"                   → "GFT"
+      "#GTT サイバーセキュリティ"          → "GTT"
+
+    ※ コードが先頭・区切り文字の直後にある大文字2〜4文字を抽出。
+    　 マッチしない場合は None を返す（ログに出るので確認して正規表現を調整）。
+    """
+    patterns = [
+        r"^([A-Z]{2,4})[\s\-_/【】#]",   # 先頭: GFT - / BST_ / MDY/ / 【GFT】/ #GTT
+        r"^([A-Z]{2,4})$",               # コードのみ
+        r"#([A-Z]{2,4})\b",              # 文中の #GFT
+    ]
+    for pat in patterns:
+        m = re.search(pat, name.strip())
+        if m:
+            return m.group(1)
+    return None
+
+
+async def get_today_sent_counts(page: Page) -> dict[str, int]:
+    """
+    LinkedIn Recruiter の InMail 送信済み一覧から「今日送信した件数」を
+    プロジェクトコード別に集計して返す。
+
+    戻り値例: {"GFT": 12, "BST": 7, "MDY": 3}
+    """
+    today_str = date.today(tz=JST).strftime("%-m/%-d")   # 例: "3/27"
+    today_iso = date.today(tz=JST).isoformat()            # 例: "2026-03-27"
+    sent_counts: dict[str, int] = {}
+
+    # ── ① LinkedIn Recruiter InMail の Sent 画面に移動 ──────────────────────
+    # LinkedIn Recruiter のメッセージ画面は複数のURLパターンがある。
+    # うまく開かない場合は --debug で確認し、URL を調整する。
+    inbox_url = "https://www.linkedin.com/talent/inbox"
+    await page.goto(inbox_url, wait_until="domcontentloaded")
+    await page.wait_for_load_state("networkidle", timeout=20_000)
+
+    # ── ② 「Sent」タブに切り替え ─────────────────────────────────────────────
+    try:
+        sent_tab = page.get_by_role("tab", name=re.compile("sent|送信済み", re.IGNORECASE))
+        if await sent_tab.count() > 0:
+            await sent_tab.first.click()
+            await page.wait_for_load_state("networkidle", timeout=10_000)
+    except Exception as e:
+        print(f"  ⚠️  Sent タブへの切り替え失敗（継続）: {e}")
+
+    # ── ③ メッセージリストを走査 ─────────────────────────────────────────────
+    # LinkedIn の InMail 一覧には「日付」と「プロジェクト名（ジョブタイトル）」が表示される。
+    # 今日の日付のメッセージのみカウントし、プロジェクト名からコードを抽出する。
+
+    page_num = 0
+    stop = False
+
+    while not stop:
+        page_num += 1
+        if DEBUG:
+            print(f"  [DEBUG] InMail Sent ページ {page_num} を解析中...")
+
+        # セレクター候補（LinkedIn の UI 変更に合わせて要調整）
+        # data-test-id や aria-label は LinkedIn が変更することがある
+        rows = await page.query_selector_all(
+            "li.msg-conversation-listitem, "
+            "[data-test-id='msg-conversation'], "
+            ".scaffold-finite-scroll__content li"
+        )
+
+        if not rows:
+            # フォールバック: ページ全体の HTML を取得してデバッグ出力
+            print(f"  ⚠️  メッセージ要素が見つかりません（ページ {page_num}）")
+            if DEBUG:
+                html = await page.content()
+                debug_path = Path(__file__).parent / f"debug_page{page_num}.html"
+                debug_path.write_text(html)
+                print(f"  [DEBUG] HTML 保存: {debug_path}")
+            break
+
+        for row in rows:
+            text = await row.inner_text()
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+            # 日付判定: 今日でなければそれ以降は不要（一覧は新着順のため）
+            has_today = any(
+                today_str in line or today_iso in line
+                for line in lines
+            )
+            is_older = any(
+                re.search(r"\d{1,2}/\d{1,2}", line) and today_str not in line
+                for line in lines
+            ) or any("/" in line and today_str not in line for line in lines if len(line) < 20)
+
+            if is_older and not has_today:
+                stop = True
+                break
+
+            if not has_today:
+                continue
+
+            # プロジェクト名（ジョブタイトル）からコード抽出
+            # LinkedIn では「プロジェクト名」がメッセージリスト行のどこかに表示される
+            # 実際の表示位置はページ構造による → 全行を試す
+            for line in lines:
+                code = extract_code_from_project_name(line)
+                if code:
+                    sent_counts[code] = sent_counts.get(code, 0) + 1
+                    if DEBUG:
+                        print(f"  [DEBUG] '{line}' → コード: {code}")
+                    break
+            else:
+                if DEBUG:
+                    print(f"  [DEBUG] コード抽出失敗（行テキスト）: {lines}")
+
+        if stop:
+            break
+
+        # 次のページへ
+        next_btn = page.get_by_role("button", name=re.compile("next|次へ", re.IGNORECASE))
+        if await next_btn.count() > 0 and await next_btn.first.is_enabled():
+            await next_btn.first.click()
+            await page.wait_for_load_state("networkidle", timeout=10_000)
+        else:
+            break
+
+    return sent_counts
+
+
+async def scrape_today_sent_counts() -> dict[str, int]:
+    """セッションを使って LinkedIn Recruiter から今日の送信数を取得する"""
     if not SESSION_FILE.exists():
         raise FileNotFoundError(
             f"セッションファイルが見つかりません: {SESSION_FILE}\n"
-            "先に `python linkedin_notion_sync.py --save-session` を実行してください。"
+            "先に `python scripts/linkedin_notion_sync.py --save-session` を実行してください。"
         )
 
     storage = json.loads(SESSION_FILE.read_text())
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            headless="--debug" not in sys.argv,
-            slow_mo=300 if "--debug" in sys.argv else 0,
+            headless=not DEBUG,
+            slow_mo=500 if DEBUG else 100,
         )
         context = await browser.new_context(storage_state=storage)
         page = await context.new_page()
 
-        # ① LinkedIn Recruiter にアクセス
-        await page.goto("https://www.linkedin.com/talent/")
-        if "login" in page.url:
+        # セッション確認
+        await page.goto("https://www.linkedin.com/talent/", wait_until="domcontentloaded")
+        if "login" in page.url or "authwall" in page.url:
             raise RuntimeError(
                 "セッションが切れています。`--save-session` で再ログインしてください。"
             )
 
-        # ② 送信済みメッセージ一覧ページに移動
-        # LinkedIn Recruiter の Messaging → Sent を開く
-        # ※ URL は環境によって異なる場合あり
-        await page.goto("https://www.linkedin.com/talent/inbox?filterBy=sent")
-        await page.wait_for_load_state("networkidle", timeout=15_000)
+        counts = await get_today_sent_counts(page)
 
-        sent_counts: dict[str, int] = {}
-        page_num = 0
-
-        while True:
-            page_num += 1
-            print(f"  ページ {page_num} を取得中...", flush=True)
-
-            # ③ メッセージ一覧のアイテムを取得
-            # 実際のセレクターは LinkedIn の UI に合わせて調整が必要
-            message_items = await page.query_selector_all(
-                "[data-control-name='message_list_item'], "
-                ".msg-conversation-listitem, "
-                ".message-list-item"
-            )
-
-            if not message_items:
-                # セレクターが合っていない場合のフォールバック: テキスト全体から抽出
-                body_text = await page.inner_text("body")
-                print("  ⚠️  メッセージ要素が見つかりません。--debug モードで確認してください。")
-                print(f"     ページテキスト（先頭500文字）:\n{body_text[:500]}")
-                break
-
-            for item in message_items:
-                text = await item.inner_text()
-                # ポジションコードを抽出（例: #GFT, #BST など）
-                # スカウトDB の識別IDや本文に含まれるコードでマッチング
-                codes = extract_position_codes(text)
-                for code in codes:
-                    sent_counts[code] = sent_counts.get(code, 0) + 1
-
-            # ④ 次のページへ
-            next_btn = await page.query_selector(
-                "[aria-label='Next'], .artdeco-pagination__button--next"
-            )
-            if next_btn and await next_btn.is_enabled():
-                await next_btn.click()
-                await page.wait_for_load_state("networkidle", timeout=10_000)
-            else:
-                break
-
-        await context.storage_state(path=str(SESSION_FILE))  # セッション更新
+        # セッション更新（有効期限を延ばす）
+        await context.storage_state(path=str(SESSION_FILE))
         await browser.close()
 
-    return sent_counts
+    return counts
 
 
-def extract_position_codes(text: str) -> list[str]:
+# ─── Notion 操作 ─────────────────────────────────────────────────────────────
+
+async def query_scout_db_linkedin() -> list[dict]:
     """
-    テキストからポジションコードを抽出する。
+    スカウトDB から「DB=Linkedin かつ 使用中=true」のレコードを全件取得する。
 
-    ポジションコードの命名規則（Notion スカウトDB 識別ID より）:
-    - 「#GFT」「#BST」のような大文字アルファベット2〜4文字
-    - または「GFT-」「BST-」のようなプレフィックス形式
-
-    ※ 実際のスカウト文の中にポジションコードが含まれている前提。
-    　 含まれていない場合は、別のマッチング方法（メッセージタイトル等）に変更してください。
-    """
-    # 例: "#GFT", "GFT-", "[GFT]" 等のパターンでコードを検出
-    patterns = [
-        r"#([A-Z]{2,4})\b",           # #GFT スタイル
-        r"\b([A-Z]{2,4})-",           # GFT- スタイル
-        r"\[([A-Z]{2,4})\]",          # [GFT] スタイル
-    ]
-    codes = set()
-    for pattern in patterns:
-        codes.update(re.findall(pattern, text))
-    return list(codes)
-
-
-# ─── Notion 更新 ─────────────────────────────────────────────────────────────
-
-async def query_scout_db() -> list[dict]:
-    """
-    Notion スカウトDB から LinkedIn 用のレコードを全件取得する。
-
-    Returns:
-        Notion ページオブジェクトのリスト
+    - DB=Linkedin : LinkedIn 以外（Bizreach・dodaX 等）のエントリは除外
+    - 使用中=true : 旧バージョン（v1 → v2 に切り替え済み等）は更新しない
     """
     results = []
     has_more = True
     cursor = None
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         while has_more:
             payload: dict = {
                 "filter": {
-                    "property": "DB",
-                    "multi_select": {"contains": "Linkedin"},
+                    "and": [
+                        {
+                            "property": "DB",
+                            "multi_select": {"contains": "Linkedin"},
+                        },
+                        {
+                            "property": "使用中",
+                            "checkbox": {"equals": True},
+                        },
+                    ]
                 },
                 "page_size": 100,
             }
@@ -223,108 +317,130 @@ async def query_scout_db() -> list[dict]:
     return results
 
 
-def get_position_code_from_page(page: dict) -> str | None:
+def get_code_from_scout_page(page: dict) -> str | None:
     """
-    Notion ページオブジェクトからポジションコードを抽出する。
+    Notion スカウトDB レコードからポジションコードを抽出する。
 
-    スカウトDB の 識別ID（title）に含まれるコードで判定。
-    例: 識別ID = "GFT-CISO-v1-LinkedIn" → "GFT"
+    識別ID (title) の先頭セグメントを使う。
+    例:
+      "GFT-CISO-v1"        → "GFT"
+      "BST-BizDev-v2"      → "BST"
+      "MDY_COO候補_v1"     → "MDY"
     """
     props = page.get("properties", {})
-    title_prop = props.get("識別ID", {})
-    title_parts = title_prop.get("title", [])
+
+    # ① 識別ID（title）から抽出
+    title_parts = props.get("識別ID", {}).get("title", [])
     title = "".join(t.get("plain_text", "") for t in title_parts)
-
-    # 識別IDの先頭コードを抽出
-    m = re.match(r"^([A-Z]{2,4})[^A-Z]", title)
-    if m:
-        return m.group(1)
-
-    # コード列プロパティ（rollup）があればそちらも確認
-    code_rollup = props.get("クライアント", {})  # rollupのプロパティ名に合わせて変更
-    # ... rollup の値取得ロジック（必要に応じて追加）
+    if title:
+        m = re.match(r"^([A-Z]{2,4})[\-_]", title)
+        if m:
+            return m.group(1)
+        # ハイフン等がない場合も試みる
+        m = re.match(r"^([A-Z]{2,4})\b", title)
+        if m:
+            return m.group(1)
 
     return None
 
 
-async def update_sent_count(page_id: str, count: int) -> None:
-    """
-    指定 Notion ページの「送信数」フィールドを更新する。
-    """
-    async with httpx.AsyncClient() as client:
+def get_current_sent_count(page: dict) -> int:
+    """Notion ページから現在の送信数を取得する（なければ 0）"""
+    return page.get("properties", {}).get("送信数", {}).get("number") or 0
+
+
+async def add_to_sent_count(page_id: str, new_total: int) -> None:
+    """指定 Notion ページの「送信数」を更新する"""
+    async with httpx.AsyncClient(timeout=30) as client:
         res = await client.patch(
             f"{NOTION_API}/pages/{page_id}",
             headers=NOTION_HEADERS,
-            json={
-                "properties": {
-                    "送信数": {"number": count},
-                }
-            },
+            json={"properties": {"送信数": {"number": new_total}}},
         )
         res.raise_for_status()
 
 
 # ─── メイン処理 ───────────────────────────────────────────────────────────────
 
-async def main():
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] LinkedIn → Notion 同期開始")
+async def main() -> None:
+    today = date.today(tz=JST).isoformat()
+    ts = datetime.now(tz=JST).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] LinkedIn → Notion 送信数同期開始（対象日: {today}）")
 
-    # ① LinkedIn から送信数を取得
-    print("LinkedIn Recruiter から送信数を取得中...")
+    if DRY_RUN:
+        print("⚠️  --dry-run モード: Notion の更新は行いません")
+
+    # ── 二重実行チェック ──────────────────────────────────────────────────────
+    if already_synced_today() and not FORCE:
+        print(f"✅ 本日 ({today}) は既に同期済みです。スキップします。")
+        print("   強制実行する場合は --force オプションを付けてください。")
+        return
+
+    # ── ① LinkedIn から今日の送信数を取得 ───────────────────────────────────
+    print("\n📥 LinkedIn Recruiter から今日の送信数を取得中...")
     try:
-        sent_counts = await scrape_sent_counts()
+        today_counts = await scrape_today_sent_counts()
     except Exception as e:
         print(f"❌ LinkedIn スクレイピング失敗: {e}")
         sys.exit(1)
 
-    if not sent_counts:
-        print("⚠️  送信数データが取得できませんでした。終了します。")
-        sys.exit(0)
+    if not today_counts:
+        print("ℹ️  今日の送信データが見つかりませんでした（送信なし or セレクター要調整）。")
+        save_state(today, {})
+        return
 
-    print(f"取得したポジション別送信数: {sent_counts}")
+    print(f"📊 取得結果（コード: 今日の送信数）:")
+    for code, cnt in sorted(today_counts.items()):
+        print(f"   {code}: {cnt} 件")
 
-    # ② Notion スカウトDB を取得
-    print("Notion スカウトDB を取得中...")
+    # ── ② Notion スカウトDB を取得 ───────────────────────────────────────────
+    print("\n📋 Notion スカウトDB を取得中...")
     try:
-        scout_pages = await query_scout_db()
+        scout_pages = await query_scout_db_linkedin()
     except Exception as e:
         print(f"❌ Notion DB 取得失敗: {e}")
         sys.exit(1)
 
-    print(f"{len(scout_pages)} 件の LinkedIn スカウトレコードを取得")
+    print(f"   {len(scout_pages)} 件の LinkedIn レコードを取得")
 
-    # ③ マッチングして更新
-    updated = 0
-    skipped = 0
+    # ── ③ マッチング → 加算更新 ─────────────────────────────────────────────
+    print("\n🔄 マッチングして更新中...")
+    updated: dict[str, int] = {}   # {code: 加算した数}
+    unmatched_codes = set(today_counts.keys())
 
     for page in scout_pages:
         page_id = page["id"]
-        code = get_position_code_from_page(page)
+        code = get_code_from_scout_page(page)
 
-        if not code:
-            skipped += 1
+        if not code or code not in today_counts:
             continue
 
-        if code not in sent_counts:
-            skipped += 1
-            continue
+        unmatched_codes.discard(code)
+        add_count = today_counts[code]
+        current   = get_current_sent_count(page)
+        new_total = current + add_count
 
-        new_count = sent_counts[code]
-        # 現在値を取得
-        current = page["properties"].get("送信数", {}).get("number") or 0
+        title_parts = page.get("properties", {}).get("識別ID", {}).get("title", [])
+        title = "".join(t.get("plain_text", "") for t in title_parts)
 
-        if current == new_count:
-            print(f"  [{code}] 変更なし ({current}件) → スキップ")
-            continue
+        if DRY_RUN:
+            print(f"   [dry-run] [{code}] 識別ID={title!r}: {current} + {add_count} = {new_total}")
+        else:
+            await add_to_sent_count(page_id, new_total)
+            print(f"   ✅ [{code}] 識別ID={title!r}: {current} + {add_count} → {new_total}")
+            updated[code] = add_count
 
-        await update_sent_count(page_id, new_count)
-        print(f"  [{code}] {current} → {new_count} 件に更新")
-        updated += 1
+    # マッチしなかったコードを警告
+    if unmatched_codes:
+        print(f"\n⚠️  Notion にマッチするレコードが見つからなかったコード: {sorted(unmatched_codes)}")
+        print("   → LinkedIn プロジェクト名とスカウトDB 識別ID の先頭コードを確認してください。")
 
-    print(
-        f"\n完了: {updated} 件更新, {skipped} 件スキップ "
-        f"({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
-    )
+    # ── ④ 状態保存 ───────────────────────────────────────────────────────────
+    if not DRY_RUN:
+        save_state(today, updated)
+
+    ts_end = datetime.now(tz=JST).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\n[{ts_end}] 完了: {len(updated)} ポジション更新")
 
 
 if __name__ == "__main__":
