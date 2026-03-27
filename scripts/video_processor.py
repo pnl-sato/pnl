@@ -309,29 +309,42 @@ def _select_transcript_prompt() -> str | None:
         log.warning("TRANSCRIPT_PROMPT_DIR にプロンプトファイルがありません: %s", prompt_dir)
         return None
 
-    print("\n面談カテゴリを選択してください:")
-    for i, f in enumerate(prompt_files, 1):
-        print(f"  {i}. {f.stem}")
-    print("  s. スキップ（デフォルトプロンプト）")
-
-    while True:
-        try:
-            raw = input("番号を入力: ").strip().lower()
-            if raw == "s":
-                log.info("カテゴリ選択スキップ → デフォルトプロンプトを使用")
-                return None
-            choice = int(raw)
-            if 1 <= choice <= len(prompt_files):
-                selected = prompt_files[choice - 1]
-                content = selected.read_text(encoding="utf-8").strip()
-                log.info("プロンプト選択: %s", selected.name)
-                return content
-            print(f"1〜{len(prompt_files)} または s を入力してください")
-        except (ValueError, EOFError):
-            pass
-        except KeyboardInterrupt:
-            log.info("カテゴリ選択キャンセル → デフォルトプロンプトを使用")
+    if sys.platform == "darwin":
+        # macOS: ダイアログで選択
+        names = [f.stem for f in prompt_files]
+        chosen = _osascript_choose_from_list(
+            title="P&L 動画処理",
+            prompt="面談カテゴリを選択してください:",
+            items=names,
+        )
+        if chosen is None:
+            log.info("カテゴリ選択スキップ → デフォルトプロンプトを使用")
             return None
+        selected = prompt_files[names.index(chosen)]
+    else:
+        # 非 macOS: ターミナル入力
+        print("\n面談カテゴリを選択してください:")
+        for i, f in enumerate(prompt_files, 1):
+            print(f"  {i}. {f.stem}")
+        print("  s. スキップ（デフォルトプロンプト）")
+        while True:
+            try:
+                raw = input("番号を入力: ").strip().lower()
+                if raw == "s":
+                    return None
+                choice = int(raw)
+                if 1 <= choice <= len(prompt_files):
+                    selected = prompt_files[choice - 1]
+                    break
+                print(f"1〜{len(prompt_files)} または s を入力してください")
+            except (ValueError, EOFError):
+                pass
+            except KeyboardInterrupt:
+                return None
+
+    content = selected.read_text(encoding="utf-8").strip()
+    log.info("プロンプト選択: %s", selected.name)
+    return content
 
 
 def _load_transcript_prompt() -> str:
@@ -626,69 +639,79 @@ def _notify_and_wait_for_rename(
     watch_dir: Path, detected_path: Path, skip_youtube: bool, skip_transcribe: bool = False
 ) -> None:
     """
-    新規 .mov 検知後、ユーザーにファイル名整備を促し Enter 後に処理する。
+    新規 .mov 検知後、macOS ダイアログでファイル名整備を促し処理する。
 
-    ユーザーが Finder でファイルをリネームしている可能性があるため、
-    Enter 後にフォルダを再スキャンして未処理 .mov を列挙・選択させる。
+    macOS ではターミナル不要のポップアップ UI で完結する。
+    非 macOS ではターミナル入力にフォールバックする。
     """
     _send_macos_notification(
         title="録画ファイルを検出しました",
-        message=f"{detected_path.name} — ファイル名を整えたら Enter を押してください",
+        message=f"{detected_path.name} — ファイル名を整えたら通知をクリック",
     )
 
-    print("\n" + "─" * 60)
-    print(f"📹 録画ファイルを検出: {detected_path.name}")
-    print()
-    print("Finder でファイル名を変更してください。")
-    print("例: 20240327_山田太郎_候補者面談.mov")
-    print("    20240327_ABC株式会社_打ち合わせ.mov")
-    print()
-    print("準備ができたら Enter を押してください（Ctrl+C でスキップ）")
-    print("─" * 60)
+    # macOS ダイアログでリネーム待ち
+    if sys.platform == "darwin":
+        result = _osascript_dialog(
+            title="P&L 動画処理",
+            message=(
+                f"録画ファイルを検出しました:\n{detected_path.name}\n\n"
+                "Finder でファイル名を変更してください。\n"
+                "例: 20240327_山田太郎_候補者面談.mov\n\n"
+                "準備ができたら OK を押してください。"
+            ),
+            buttons=["スキップ", "OK"],
+            default_button="OK",
+        )
+        if result != "OK":
+            log.info("スキップしました: %s", detected_path.name)
+            return
+    else:
+        # 非 macOS フォールバック（ターミナル入力）
+        print(f"\n録画ファイルを検出: {detected_path.name}")
+        print("ファイル名を整えたら Enter を押してください（Ctrl+C でスキップ）")
+        try:
+            input()
+        except KeyboardInterrupt:
+            return
 
-    try:
-        input()
-    except KeyboardInterrupt:
-        print("\nスキップしました。後から process コマンドで処理できます。\n")
-        return
-
-    # Enter 後にフォルダを再スキャン（リネーム済みのファイルを拾う）
+    # ダイアログ後にフォルダを再スキャン（リネーム済みのファイルを拾う）
     pending = sorted(
         [p for p in watch_dir.glob("*.mov") if not is_processed(p)],
         key=lambda p: p.stat().st_mtime,
     )
 
     if not pending:
-        print("処理対象のファイルが見つかりません。スキップします。\n")
+        log.info("処理対象のファイルが見つかりません。スキップします。")
         return
 
     if len(pending) == 1:
         target = pending[0]
-        print(f"処理対象: {target.name}")
     else:
-        print("\n処理対象のファイルを選択してください:")
-        for i, p in enumerate(pending, 1):
-            size_mb = p.stat().st_size / 1e6
-            print(f"  {i}. {p.name}  ({size_mb:.0f} MB)")
-        print(f"  s. スキップ")
-        while True:
+        # 複数ある場合はダイアログで選択
+        if sys.platform == "darwin":
+            names = [f"{p.name}  ({p.stat().st_size/1e6:.0f} MB)" for p in pending]
+            chosen = _osascript_choose_from_list(
+                title="P&L 動画処理",
+                prompt="処理するファイルを選択してください:",
+                items=names,
+            )
+            if chosen is None:
+                log.info("スキップしました。")
+                return
+            target = pending[names.index(chosen)]
+        else:
+            print("\n処理対象のファイルを選択してください:")
+            for i, p in enumerate(pending, 1):
+                print(f"  {i}. {p.name}  ({p.stat().st_size/1e6:.0f} MB)")
             try:
-                raw = input("番号を入力: ").strip().lower()
+                raw = input("番号を入力 (s でスキップ): ").strip().lower()
                 if raw == "s":
-                    print("スキップしました。\n")
                     return
-                choice = int(raw)
-                if 1 <= choice <= len(pending):
-                    target = pending[choice - 1]
-                    break
-                print(f"1〜{len(pending)} の番号を入力してください")
-            except (ValueError, EOFError):
-                pass
-            except KeyboardInterrupt:
-                print("\nスキップしました。\n")
+                target = pending[int(raw) - 1]
+            except (ValueError, IndexError, KeyboardInterrupt):
                 return
 
-    # 文字起こしを行う場合のみカテゴリ選択を表示
+    # カテゴリ選択
     prompt_override = None
     if not skip_transcribe and GEMINI_API_KEY:
         prompt_override = _select_transcript_prompt()
@@ -702,6 +725,54 @@ def _notify_and_wait_for_rename(
         )
     except Exception as e:
         log.error("処理失敗 %s: %s", target.name, e)
+        if sys.platform == "darwin":
+            _osascript_dialog(
+                title="P&L 動画処理 - エラー",
+                message=f"処理中にエラーが発生しました:\n{e}",
+                buttons=["OK"],
+                default_button="OK",
+            )
+
+
+def _osascript_dialog(
+    title: str, message: str, buttons: list[str], default_button: str
+) -> str:
+    """macOS ダイアログを表示し、押されたボタン名を返す。"""
+    buttons_str = ", ".join(f'"{b}"' for b in buttons)
+    script = (
+        f'display dialog "{message}" '
+        f'buttons {{{buttons_str}}} '
+        f'default button "{default_button}" '
+        f'with title "{title}"'
+    )
+    result = subprocess.run(
+        ["osascript", "-e", script], capture_output=True, text=True
+    )
+    # "button returned:OK" → "OK"
+    out = result.stdout.strip()
+    if out.startswith("button returned:"):
+        return out.replace("button returned:", "")
+    return ""
+
+
+def _osascript_choose_from_list(title: str, prompt: str, items: list[str]) -> str | None:
+    """macOS のリスト選択ダイアログを表示し、選択された文字列を返す。未選択は None。"""
+    items_str = ", ".join(f'"{i}"' for i in items)
+    script = (
+        f'set choices to {{{items_str}}}\n'
+        f'set selected to choose from list choices '
+        f'with prompt "{prompt}" with title "{title}"\n'
+        f'if selected is false then\n'
+        f'    return "SKIP"\n'
+        f'else\n'
+        f'    return item 1 of selected\n'
+        f'end if'
+    )
+    result = subprocess.run(
+        ["osascript", "-e", script], capture_output=True, text=True
+    )
+    out = result.stdout.strip()
+    return None if out == "SKIP" else out
 
 
 def _send_macos_notification(title: str, message: str) -> None:

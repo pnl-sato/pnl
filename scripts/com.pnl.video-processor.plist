@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pnl.video-processor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/satouyuuta/pnl/scripts/start_video_processor.sh</string>
+    </array>
+
+    <!-- ログイン時に自動起動 -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- クラッシュ時に自動再起動 -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- ログ出力先 -->
+    <key>StandardOutPath</key>
+    <string>/Users/satouyuuta/pnl/video_processor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/satouyuuta/pnl/video_processor.log</string>
+</dict>
+</plist>
