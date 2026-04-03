@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "YOUTRUST コピー保護解除",
+  "version": "1.0",
+  "description": "admin.youtrust.jp でテキストのコピーを可能にします",
+  "content_scripts": [
+    {
+      "matches": ["https://admin.youtrust.jp/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}
