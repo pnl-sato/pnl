@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: line-ai-bot
+    runtime: python
+    rootDir: line_bot
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: LINE_CHANNEL_SECRET
+        sync: false
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: MONTHLY_BUDGET_YEN
+        value: "500"
+      - key: DB_PATH
+        value: /var/data/usage.db
+    disk:
+      name: usage-db
+      mountPath: /var/data
+      sizeGB: 1
