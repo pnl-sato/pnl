@@ -119,9 +119,9 @@ def _handle_event(event: dict) -> None:
     if current_cost >= MONTHLY_BUDGET_YEN:
         reply_to_line(
             reply_token,
-            f"今月のAI利用が上限（{MONTHLY_BUDGET_YEN}円）に達しました😢\n"
-            f"来月1日にリセットされます。\n\n"
-            f"現在の利用額: 約{int(current_cost)}円",
+            f"いやぁ、参ったね！今月はぼくもここまでみたいだよ。\n"
+            f"来月になったらまた思いっきり話そうじゃないか！\n\n"
+            f"……幸せだなあ。君と話せる日を楽しみにしてるよ。",
         )
         return
 
@@ -150,8 +150,8 @@ def _handle_event(event: dict) -> None:
     warning = ""
     if new_cost >= MONTHLY_BUDGET_YEN * 0.8 and current_cost < MONTHLY_BUDGET_YEN * 0.8:
         warning = (
-            f"\n\n⚠️ 今月の利用額が上限の80%（約{int(new_cost)}円）を超えました。"
-            f"上限は{MONTHLY_BUDGET_YEN}円です。"
+            f"\n\nよし、ちょっと聞いてくれよ。"
+            f"今月はもうそろそろ終盤だよ。残り少ないけど、悔いのないようにいこうじゃないか！"
         )
 
     reply_to_line(reply_token, ai_reply + warning)
