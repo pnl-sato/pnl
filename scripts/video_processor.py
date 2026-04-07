@@ -99,6 +99,14 @@ TRANSCRIPT_PROMPT_FILE = os.getenv("TRANSCRIPT_PROMPT_FILE", "")
 # TRANSCRIPT_PROMPT_FILE より優先される（選択した場合）
 TRANSCRIPT_PROMPT_DIR = os.getenv("TRANSCRIPT_PROMPT_DIR", "")
 
+# 議事録生成プロンプトを格納するディレクトリ（カテゴリ別 .txt）
+# 文字起こし完了後に Gemini で議事録を生成し Notion に追記する
+MINUTES_PROMPT_DIR = os.getenv("MINUTES_PROMPT_DIR", "")
+
+# Notion 連携（議事録自動追記）
+NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
+NOTION_MEMO_DB_ID = os.getenv("NOTION_MEMO_DB_ID", "")
+
 
 # ─── ffmpeg 処理 ──────────────────────────────────────────────────────────────
 
@@ -295,26 +303,26 @@ _DEFAULT_TRANSCRIPT_PROMPT = """\
 """
 
 
-def _select_transcript_prompt() -> str | None:
+def _select_transcript_prompt() -> tuple[str | None, str | None]:
     """
     TRANSCRIPT_PROMPT_DIR にある .txt ファイルをカテゴリ一覧として表示し、
-    ユーザーに選択させる。選択されたファイルの内容を返す。
+    ユーザーに選択させる。(プロンプト本文, カテゴリ名) のタプルを返す。
 
-    - ディレクトリ未設定 / 空 / .txt ファイルなし の場合は None を返す（選択スキップ）
+    - ディレクトリ未設定 / 空 / .txt ファイルなし の場合は (None, None) を返す
     - 「s. スキップ」でデフォルトプロンプトにフォールバック
     """
     if not TRANSCRIPT_PROMPT_DIR:
-        return None
+        return None, None
 
     prompt_dir = Path(TRANSCRIPT_PROMPT_DIR).expanduser()
     if not prompt_dir.exists():
         log.warning("TRANSCRIPT_PROMPT_DIR が見つかりません: %s", prompt_dir)
-        return None
+        return None, None
 
     prompt_files = sorted(prompt_dir.glob("*.txt"))
     if not prompt_files:
         log.warning("TRANSCRIPT_PROMPT_DIR にプロンプトファイルがありません: %s", prompt_dir)
-        return None
+        return None, None
 
     if sys.platform == "darwin":
         # macOS: ダイアログで選択
@@ -326,7 +334,7 @@ def _select_transcript_prompt() -> str | None:
         )
         if chosen is None:
             log.info("カテゴリ選択スキップ → デフォルトプロンプトを使用")
-            return None
+            return None, None
         selected = prompt_files[names.index(chosen)]
     else:
         # 非 macOS: ターミナル入力
@@ -338,7 +346,7 @@ def _select_transcript_prompt() -> str | None:
             try:
                 raw = input("番号を入力: ").strip().lower()
                 if raw == "s":
-                    return None
+                    return None, None
                 choice = int(raw)
                 if 1 <= choice <= len(prompt_files):
                     selected = prompt_files[choice - 1]
@@ -347,11 +355,70 @@ def _select_transcript_prompt() -> str | None:
             except (ValueError, EOFError):
                 pass
             except KeyboardInterrupt:
-                return None
+                return None, None
 
     content = selected.read_text(encoding="utf-8").strip()
     log.info("プロンプト選択: %s", selected.name)
-    return content
+    return content, selected.stem
+
+
+def _load_minutes_prompt(category_name: str | None) -> str | None:
+    """議事録生成プロンプトをカテゴリ名から読み込む。"""
+    if not MINUTES_PROMPT_DIR or not category_name:
+        return None
+    prompt_path = Path(MINUTES_PROMPT_DIR).expanduser() / f"{category_name}.txt"
+    if prompt_path.exists():
+        return prompt_path.read_text(encoding="utf-8").strip()
+    log.warning("議事録プロンプトが見つかりません: %s", prompt_path)
+    return None
+
+
+def generate_minutes_with_gemini(transcript_text: str, prompt: str) -> str:
+    """文字起こしテキストからGeminiで議事録を生成する。"""
+    from google import genai
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    full_prompt = f"{prompt}\n\n---\n\n{transcript_text}"
+    response = client.models.generate_content(model=GEMINI_MODEL, contents=full_prompt)
+    return response.text
+
+
+def find_notion_page_by_pdf_name(pdf_name: str) -> str | None:
+    """PDFNameプロパティでNotionの面談メモDBを検索してpage_idを返す。"""
+    from notion_client import Client
+    notion = Client(auth=NOTION_TOKEN)
+    results = notion.databases.query(
+        database_id=NOTION_MEMO_DB_ID,
+        filter={
+            "property": "PDFName",
+            "formula": {"string": {"equals": pdf_name}},
+        },
+    )
+    pages = results.get("results", [])
+    if pages:
+        return pages[0]["id"]
+    log.warning("NotionページがPDFName '%s' で見つかりませんでした", pdf_name)
+    return None
+
+
+def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
+    """Notionページの本文末尾に議事録テキストを追記する。"""
+    from notion_client import Client
+    notion = Client(auth=NOTION_TOKEN)
+    lines = [line for line in minutes_text.splitlines() if line.strip()]
+    blocks = [
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"type": "text", "text": {"content": line[:2000]}}]
+            },
+        }
+        for line in lines
+    ]
+    # Notion APIは一度に100ブロックまで
+    for i in range(0, len(blocks), 100):
+        notion.blocks.children.append(block_id=page_id, children=blocks[i : i + 100])
+    log.info("Notion追記完了: page_id=%s", page_id)
 
 
 def _load_transcript_prompt() -> str:
@@ -485,12 +552,13 @@ def process_file(
     skip_youtube: bool = False,
     skip_transcribe: bool = False,
     prompt_override: str | None = None,
+    minutes_prompt: str | None = None,
 ) -> None:
     """
     1つの .mov ファイルを処理する。
 
-    変換完了後、YouTube アップロードと Gemini 文字起こしを並列実行する。
-    prompt_override が指定された場合、そのプロンプトで文字起こしを行う。
+    変換完了後、YouTube アップロードと Gemini 文字起こしを順次実行する。
+    minutes_prompt が指定された場合、文字起こし後に議事録を生成してNotionに追記する。
     """
     mov_path = mov_path.resolve()
 
@@ -533,7 +601,23 @@ def process_file(
     elif not skip_transcribe and not GEMINI_API_KEY:
         log.warning("GEMINI_API_KEY 未設定のため文字起こしをスキップします")
 
-    # 3. 処理済み記録
+    # 3. Notion 議事録追記
+    if transcript_path and minutes_prompt and NOTION_TOKEN and NOTION_MEMO_DB_ID:
+        try:
+            transcript_text = transcript_path.read_text(encoding="utf-8")
+            log.info("議事録を生成中...")
+            minutes_text = generate_minutes_with_gemini(transcript_text, minutes_prompt)
+            pdf_name = mov_path.stem
+            log.info("Notionページを検索中: PDFName=%s", pdf_name)
+            page_id = find_notion_page_by_pdf_name(pdf_name)
+            if page_id:
+                append_minutes_to_notion(page_id, minutes_text)
+            else:
+                log.warning("Notionへの追記をスキップ（ページが見つかりません）")
+        except Exception as e:
+            log.error("Notion議事録追記失敗: %s", e)
+
+    # 4. 処理済み記録
     mark_processed(mov_path, youtube_id, m4a_path, transcript_path)
 
     # 4. 完了通知
@@ -727,8 +811,10 @@ def _notify_and_wait_for_rename(
 
     # カテゴリ選択
     prompt_override = None
+    minutes_prompt = None
     if not skip_transcribe and GEMINI_API_KEY:
-        prompt_override = _select_transcript_prompt()
+        prompt_override, category_name = _select_transcript_prompt()
+        minutes_prompt = _load_minutes_prompt(category_name)
 
     try:
         process_file(
@@ -736,6 +822,7 @@ def _notify_and_wait_for_rename(
             skip_youtube=skip_youtube,
             skip_transcribe=skip_transcribe,
             prompt_override=prompt_override,
+            minutes_prompt=minutes_prompt,
         )
     except Exception as e:
         log.error("処理失敗 %s: %s", target.name, e)
@@ -841,13 +928,16 @@ def main():
 
     if args.command == "process":
         prompt_override = None
+        minutes_prompt = None
         if not args.no_transcribe and GEMINI_API_KEY:
-            prompt_override = _select_transcript_prompt()
+            prompt_override, category_name = _select_transcript_prompt()
+            minutes_prompt = _load_minutes_prompt(category_name)
         process_file(
             args.mov_file,
             skip_youtube=args.no_youtube,
             skip_transcribe=args.no_transcribe,
             prompt_override=prompt_override,
+            minutes_prompt=minutes_prompt,
         )
     elif args.command == "watch":
         watch_folder(
