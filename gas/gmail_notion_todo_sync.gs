@@ -61,7 +61,7 @@ function setupTrigger() {
 
   ScriptApp.newTrigger('run')
     .timeBased()
-    .everyMinutes(15)
+    .everyMinutes(1)
     .create();
 
   Logger.log('✅ トリガー設定完了（15分ごとに run が実行されます）');
