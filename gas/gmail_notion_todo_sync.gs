@@ -295,37 +295,48 @@ function run() {
   let newCount = 0, skipCount = 0, errorCount = 0;
 
   threads.forEach(thread => {
-    thread.getMessages().forEach(msg => {
-      const msgId = msg.getId();
+    // スレッド単位で処理（thread ID で重複チェック）
+    const threadId = thread.getId();
 
-      if (isProcessed(msgId)) {
-        skipCount++;
-        return;
-      }
+    if (isProcessed(threadId)) {
+      skipCount++;
+      return;
+    }
 
-      try {
-        const subject    = msg.getSubject()  || '(件名なし)';
-        const sender     = msg.getFrom()     || '';
-        const receivedAt = msg.getDate();
-        const body       = getEmailBody(msg) || '(本文なし)';
+    try {
+      const msgs       = thread.getMessages();
+      const firstMsg   = msgs[0];
+      const lastMsg    = msgs[msgs.length - 1];
 
-        Logger.log(`\n  処理中: ${subject}`);
+      // 件名はスレッドの最初のメールから（Re: を除去）
+      const subject    = firstMsg.getSubject().replace(/^(Re:\s*)+/i, '').trim() || '(件名なし)';
+      const sender     = firstMsg.getFrom() || '';
+      const receivedAt = firstMsg.getDate();
 
-        const summary = generateSummary(subject, body, config.anthropicKey);
-        Logger.log(`  サマリ: ${summary.substring(0, 80)}…`);
+      // 本文: スレッド内の全メールを時系列に結合
+      const body = msgs.map((msg, i) => {
+        const from = msg.getFrom() || '';
+        const date = Utilities.formatDate(msg.getDate(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm');
+        const text = getEmailBody(msg) || '(本文なし)';
+        return `--- ${i + 1}通目 / ${from} / ${date} ---\n${text}`;
+      }).join('\n\n');
 
-        const pageId = createNotionTodo(config, subject, summary, receivedAt, sender, body);
-        Logger.log(`  ✅ Notion ToDo 作成: ${pageId}`);
+      Logger.log(`\n  処理中: ${subject}（${msgs.length}通）`);
 
-        markAsProcessed(msgId);
-        doneLabel.addToThread(thread);
-        newCount++;
+      const summary = generateSummary(subject, body, config.anthropicKey);
+      Logger.log(`  サマリ: ${summary.substring(0, 80)}…`);
 
-      } catch (e) {
-        Logger.log(`  ❌ エラー (${msgId}): ${e.message}`);
-        errorCount++;
-      }
-    });
+      const pageId = createNotionTodo(config, subject, summary, receivedAt, sender, body);
+      Logger.log(`  ✅ Notion ToDo 作成: ${pageId}`);
+
+      markAsProcessed(threadId);
+      doneLabel.addToThread(thread);
+      newCount++;
+
+    } catch (e) {
+      Logger.log(`  ❌ エラー (${threadId}): ${e.message}`);
+      errorCount++;
+    }
   });
 
   Logger.log(`\n完了: ${newCount} 件処理, ${skipCount} 件スキップ, ${errorCount} 件エラー`);
