@@ -69,30 +69,31 @@ function setupTrigger() {
 
 
 // ─── 処理済み管理 ─────────────────────────────────────────────────────────────
+// { threadId: { count: N, processedAt: "ISO文字列" } } で保存
 
-const PROCESSED_KEY = 'processed_message_ids';
+const PROCESSED_KEY = 'processed_threads';
 
-function getProcessedIds() {
+function getProcessedThreads() {
   const raw = PropertiesService.getUserProperties().getProperty(PROCESSED_KEY);
   return raw ? JSON.parse(raw) : {};
 }
 
-function markAsProcessed(msgId) {
-  const ids = getProcessedIds();
-  ids[msgId] = new Date().toISOString();
-
-  // 90日以上前のエントリを削除（プロパティの肥大化防止）
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 90);
-  Object.keys(ids).forEach(k => {
-    if (new Date(ids[k]) < cutoff) delete ids[k];
-  });
-
-  PropertiesService.getUserProperties().setProperty(PROCESSED_KEY, JSON.stringify(ids));
+function getProcessedCount(threadId) {
+  return (getProcessedThreads()[threadId] || {}).count || 0;
 }
 
-function isProcessed(msgId) {
-  return !!getProcessedIds()[msgId];
+function markAsProcessed(threadId, msgCount) {
+  const data = getProcessedThreads();
+  data[threadId] = { count: msgCount, processedAt: new Date().toISOString() };
+
+  // 90日以上前のエントリを削除（肥大化防止）
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 90);
+  Object.keys(data).forEach(k => {
+    if (new Date(data[k].processedAt) < cutoff) delete data[k];
+  });
+
+  PropertiesService.getUserProperties().setProperty(PROCESSED_KEY, JSON.stringify(data));
 }
 
 
@@ -295,41 +296,49 @@ function run() {
   let newCount = 0, skipCount = 0, errorCount = 0;
 
   threads.forEach(thread => {
-    // スレッド単位で処理（thread ID で重複チェック）
-    const threadId = thread.getId();
+    const threadId   = thread.getId();
+    const msgs       = thread.getMessages();
+    const totalCount = msgs.length;
+    const lastCount  = getProcessedCount(threadId);  // 前回処理時のメッセージ数（0=未処理）
 
-    if (isProcessed(threadId)) {
+    // 新着メッセージがなければスキップ
+    if (totalCount <= lastCount) {
       skipCount++;
       return;
     }
 
     try {
-      const msgs       = thread.getMessages();
       const firstMsg   = msgs[0];
-      const lastMsg    = msgs[msgs.length - 1];
-
       // 件名はスレッドの最初のメールから（Re: を除去）
       const subject    = firstMsg.getSubject().replace(/^(Re:\s*)+/i, '').trim() || '(件名なし)';
       const sender     = firstMsg.getFrom() || '';
-      const receivedAt = firstMsg.getDate();
 
-      // 本文: スレッド内の全メールを時系列に結合
-      const body = msgs.map((msg, i) => {
+      // 新着メッセージのみ抽出（前回処理分以降）
+      const newMsgs    = msgs.slice(lastCount);
+      const receivedAt = newMsgs[0].getDate();
+      const isReply    = lastCount > 0;  // 再処理（返信あり）かどうか
+
+      // 本文: 新着メッセージのみ結合
+      const body = newMsgs.map((msg, i) => {
         const from = msg.getFrom() || '';
         const date = Utilities.formatDate(msg.getDate(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm');
         const text = getEmailBody(msg) || '(本文なし)';
-        return `--- ${i + 1}通目 / ${from} / ${date} ---\n${text}`;
+        const label = isReply ? `返信${lastCount + i + 1}通目` : `${i + 1}通目`;
+        return `--- ${label} / ${from} / ${date} ---\n${text}`;
       }).join('\n\n');
 
-      Logger.log(`\n  処理中: ${subject}（${msgs.length}通）`);
+      const titlePrefix = isReply ? `[返信あり] ` : '';
+      const displaySubject = `${titlePrefix}${subject}`;
+
+      Logger.log(`\n  処理中: ${displaySubject}（新着${newMsgs.length}通）`);
 
       const summary = generateSummary(subject, body, config.anthropicKey);
       Logger.log(`  サマリ: ${summary.substring(0, 80)}…`);
 
-      const pageId = createNotionTodo(config, subject, summary, receivedAt, sender, body);
+      const pageId = createNotionTodo(config, displaySubject, summary, receivedAt, sender, body);
       Logger.log(`  ✅ Notion ToDo 作成: ${pageId}`);
 
-      markAsProcessed(threadId);
+      markAsProcessed(threadId, totalCount);
       doneLabel.addToThread(thread);
       newCount++;
 
