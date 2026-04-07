@@ -582,11 +582,14 @@ def watch_folder(
 
     # バックグラウンドスレッドから main スレッドへの通知キュー
     detected_q: queue.Queue = queue.Queue()
+    _pending: set = set()  # キューまたはダイアログ処理中のファイルを追跡（重複防止）
 
     def _on_new_mov(path: Path) -> None:
         """新規 .mov 検知時にキューへ追加（バックグラウンドスレッドから呼ぶ）。"""
+        resolved = path.resolve()
         _wait_until_stable(path)
-        if not is_processed(path):
+        if not is_processed(path) and resolved not in _pending:
+            _pending.add(resolved)
             detected_q.put(path)
 
     # ── watchdog でイベント監視 ──────────────────────────────────────────────
@@ -637,6 +640,7 @@ def watch_folder(
             _notify_and_wait_for_rename(
                 watch_dir, detected_path, skip_youtube, skip_transcribe
             )
+            _pending.discard(detected_path.resolve())
 
     except KeyboardInterrupt:
         log.info("監視を終了します")
