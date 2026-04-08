@@ -293,7 +293,7 @@ function run() {
   }
   Logger.log(`  ${threads.length} スレッド検出`);
 
-  let newCount = 0, skipCount = 0, errorCount = 0;
+  const myEmail = Session.getActiveUser().getEmail().toLowerCase();
 
   threads.forEach(thread => {
     const threadId   = thread.getId();
@@ -307,18 +307,29 @@ function run() {
       return;
     }
 
+    // 新着メッセージのうち、自分が送ったもの以外を対象にする
+    const newMsgs = msgs.slice(lastCount).filter(msg => {
+      const from = msg.getFrom() || '';
+      return !from.toLowerCase().includes(myEmail);
+    });
+
+    // 他者からの新着がなければ処理済みカウントだけ更新してスキップ
+    if (newMsgs.length === 0) {
+      markAsProcessed(threadId, totalCount);
+      skipCount++;
+      return;
+    }
+
     try {
       const firstMsg   = msgs[0];
       // 件名はスレッドの最初のメールから（Re: を除去）
       const subject    = firstMsg.getSubject().replace(/^(Re:\s*)+/i, '').trim() || '(件名なし)';
       const sender     = firstMsg.getFrom() || '';
 
-      // 新着メッセージのみ抽出（前回処理分以降）
-      const newMsgs    = msgs.slice(lastCount);
       const receivedAt = newMsgs[0].getDate();
       const isReply    = lastCount > 0;  // 再処理（返信あり）かどうか
 
-      // 本文: 新着メッセージのみ結合
+      // 本文: 他者からの新着メッセージのみ結合
       const body = newMsgs.map((msg, i) => {
         const from = msg.getFrom() || '';
         const date = Utilities.formatDate(msg.getDate(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm');
