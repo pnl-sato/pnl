@@ -69,7 +69,7 @@ launchctl load "$PLIST_PATH"
 
 echo ""
 echo "=== セットアップ完了 ==="
-echo "~/Downloads に OGG ファイルを保存すると自動的に MP3 に変換されます。"
+echo "/Users/satouyuuta/Desktop/00_Download_sync に OGG ファイルを保存すると自動的に MP3 に変換されます。"
 echo "ログ: ~/Library/Logs/ogg-converter.log"
 echo ""
 echo "停止する場合: launchctl unload $PLIST_PATH"

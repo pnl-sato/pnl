@@ -1,8 +1,8 @@
 #!/bin/bash
 # OGG自動変換ウォッチャー
-# ~/Downloads に OGG ファイルが保存されたら自動的に MP3 に変換する
+# Chromeのダウンロード先フォルダを監視して OGG を自動的に MP3 に変換する
 
-WATCH_DIR="$HOME/Downloads"
+WATCH_DIR="/Users/satouyuuta/Desktop/00_Download_sync"
 LOG="$HOME/Library/Logs/ogg-converter.log"
 FFMPEG="$(brew --prefix)/bin/ffmpeg"
 
