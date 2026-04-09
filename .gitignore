@@ -1,5 +1,7 @@
 .env
 scripts/linkedin_session.json
+scripts/sync_state.json
+scripts/debug_*.html
 logs/
 __pycache__/
 *.pyc

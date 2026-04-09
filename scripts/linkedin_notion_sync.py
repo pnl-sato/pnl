@@ -54,7 +54,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 # スカウトDB の Notion database ID
 # 「https://www.notion.so/{この部分}?v=...」の値（ダッシュなし32文字）
-SCOUT_DB_ID = os.environ.get("SCOUT_DB_ID", "2597d017b6a0808ea499c4ec941d2a96")
+SCOUT_DB_ID = os.environ["SCOUT_DB_ID"]
 
 SESSION_FILE = Path(__file__).parent / "linkedin_session.json"
 STATE_FILE   = Path(__file__).parent / "sync_state.json"
@@ -201,7 +201,7 @@ async def count_today_threads(page: Page, today_ja: str) -> int:
             if DEBUG:
                 html = await page.content()
                 (Path(__file__).parent / "debug_project.html").write_text(html)
-                print(f"  [DEBUG] スレッド要素なし → debug_project.html を保存")
+                print(f"  [DEBUG] スレッド要素なし → debug_project.html を保存（個人情報含む・要削除）")
             break
 
         stop = False
@@ -268,7 +268,7 @@ async def get_today_sent_by_project(page: Page) -> dict[str, int]:
     if DEBUG:
         html = await page.content()
         (Path(__file__).parent / "debug_inbox.html").write_text(html)
-        print(f"  [DEBUG] debug_inbox.html を保存（今日の日付: {today_ja}）")
+        print(f"  [DEBUG] debug_inbox.html を保存（今日の日付: {today_ja}）（個人情報含む・要削除）")
 
     # ② プロジェクト一覧を取得
     project_names = await get_all_project_names(page)
@@ -392,10 +392,16 @@ async def fetch_position_name(position_page_id: str, client: httpx.AsyncClient) 
             f"{NOTION_API}/pages/{position_page_id}",
             headers=NOTION_HEADERS,
         )
+        if res.status_code in (401, 403):
+            raise RuntimeError(
+                f"Notion API 認証エラー ({res.status_code}): トークンまたは権限を確認してください"
+            )
         res.raise_for_status()
         data = res.json()
         title_parts = data.get("properties", {}).get("名前", {}).get("title", [])
         return "".join(t.get("plain_text", "") for t in title_parts) or None
+    except RuntimeError:
+        raise
     except Exception as e:
         if DEBUG:
             print(f"  [DEBUG] ポジション取得失敗 ({position_page_id}): {e}")
