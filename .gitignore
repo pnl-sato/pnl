@@ -4,3 +4,5 @@ logs/
 __pycache__/
 *.pyc
 .venv/
+credentials/
+google_drive_structure.md
