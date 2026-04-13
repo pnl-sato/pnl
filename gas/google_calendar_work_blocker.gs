@@ -1,29 +1,30 @@
 /**
  * Google カレンダー 作業ブロッカー
  *
- * 【動作】
  * カレンダーに「Online:」を含む予定が作成・更新されたとき、
  * 前後 30 分に「作業」予定を自動で挿入する。
  *
  *   例: "Online: 候補者Aさん面談" 14:00〜15:00
- *       → "作業" 13:30〜14:00（前バッファ）
- *       → "作業" 15:00〜15:30（後バッファ）
+ *       -> "作業" 13:30〜14:00（前バッファ）
+ *       -> "作業" 15:00〜15:30（後バッファ）
  *
- * 【セットアップ（初回のみ）】
+ * [セットアップ（初回のみ）]
  * 1. https://script.google.com でプロジェクトを新規作成
  * 2. このファイルの内容を貼り付けて保存
  * 3. 関数リストから「setup」を選択して実行
- *    → カレンダー変更トリガーが自動登録される
+ *    -> カレンダー変更トリガーが自動登録される
  *
  * 以後はカレンダーを変更するたびに自動で動く。手動実行は runManually() を使う。
  */
 
-var ONLINE_PREFIX  = 'Online:';
-var WORK_TITLE     = '作業';
-var BUFFER_MINUTES = 30;
+var ONLINE_PREFIX   = 'Online:';
+var WORK_TITLE      = '作業';
+var BUFFER_MINUTES  = 30;
 var LOOK_AHEAD_DAYS = 30;
 
-// ─── セットアップ ─────────────────────────────────────────────────────────────
+// ===========================================================================
+// セットアップ
+// ===========================================================================
 
 /**
  * カレンダー変更トリガーを登録する。初回のみ手動で実行すること。
@@ -41,10 +42,12 @@ function setup() {
     .onEventUpdated()
     .create();
 
-  Logger.log('✅ トリガーを登録しました。カレンダーの変更を検知して自動実行されます。');
+  Logger.log('トリガーを登録しました。カレンダーの変更を検知して自動実行されます。');
 }
 
-// ─── メインハンドラ ───────────────────────────────────────────────────────────
+// ===========================================================================
+// メインハンドラ
+// ===========================================================================
 
 /**
  * カレンダーに変更があるたびに自動で呼ばれる。
@@ -72,27 +75,27 @@ function onEventUpdated(e) {
     var lastUpdated = event.getLastUpdated().toISOString();
     var stateKey    = 'ev_' + eventId;
 
-    // updated が変わっていなければ処理済み → スキップ
+    // updated が変わっていなければ処理済み -> スキップ
     if (props.getProperty(stateKey) === lastUpdated) return;
 
-    var title      = event.getTitle();
-    var start      = event.getStartTime();
-    var end        = event.getEndTime();
-    var bufferMs   = BUFFER_MINUTES * 60 * 1000;
+    var title    = event.getTitle();
+    var start    = event.getStartTime();
+    var end      = event.getEndTime();
+    var bufferMs = BUFFER_MINUTES * 60 * 1000;
 
-    var preStart   = new Date(start.getTime() - bufferMs);
-    var postEnd    = new Date(end.getTime()   + bufferMs);
+    var preStart = new Date(start.getTime() - bufferMs);
+    var postEnd  = new Date(end.getTime() + bufferMs);
 
-    Logger.log('📅 処理中: ' + title + ' (' + formatTime(start) + '〜' + formatTime(end) + ')');
+    Logger.log('処理中: ' + title + ' (' + formatTime(start) + '〜' + formatTime(end) + ')');
 
     // 前バッファ
     if (!workBlockExists(calendar, preStart, start)) {
       calendar.createEvent(WORK_TITLE, preStart, start, {
         description: '「' + title + '」の前作業時間'
       });
-      Logger.log('  ✅ 前作業ブロック作成: ' + formatTime(preStart) + '〜' + formatTime(start));
+      Logger.log('  前作業ブロック作成: ' + formatTime(preStart) + '〜' + formatTime(start));
     } else {
-      Logger.log('  ⏭️ 前作業ブロック: 既に存在');
+      Logger.log('  前作業ブロック: 既に存在、スキップ');
     }
 
     // 後バッファ
@@ -100,16 +103,18 @@ function onEventUpdated(e) {
       calendar.createEvent(WORK_TITLE, end, postEnd, {
         description: '「' + title + '」の後作業時間'
       });
-      Logger.log('  ✅ 後作業ブロック作成: ' + formatTime(end) + '〜' + formatTime(postEnd));
+      Logger.log('  後作業ブロック作成: ' + formatTime(end) + '〜' + formatTime(postEnd));
     } else {
-      Logger.log('  ⏭️ 後作業ブロック: 既に存在');
+      Logger.log('  後作業ブロック: 既に存在、スキップ');
     }
 
     props.setProperty(stateKey, lastUpdated);
   });
 }
 
-// ─── ユーティリティ ───────────────────────────────────────────────────────────
+// ===========================================================================
+// ユーティリティ
+// ===========================================================================
 
 /**
  * 指定した時間帯に「作業」イベントが既に存在するか確認する。
@@ -124,12 +129,16 @@ function workBlockExists(calendar, start, end) {
   });
 }
 
-/** 時刻を "MM/dd HH:mm" 形式にフォーマットする。 */
+/**
+ * 時刻を "MM/dd HH:mm" 形式にフォーマットする。
+ */
 function formatTime(date) {
   return Utilities.formatDate(date, Session.getScriptTimeZone(), 'MM/dd HH:mm');
 }
 
-// ─── 手動テスト ───────────────────────────────────────────────────────────────
+// ===========================================================================
+// 手動テスト
+// ===========================================================================
 
 /**
  * トリガーなしで手動テスト実行する。
