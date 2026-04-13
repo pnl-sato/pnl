@@ -408,29 +408,66 @@ def find_notion_page_by_pdf_name(pdf_name: str) -> str | None:
 
 def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
     """Notionページの本文末尾に議事録テキストを追記する。"""
+    import re
     import httpx
+
+    def _parse_rich_text(text: str) -> list[dict]:
+        """**bold** をNotionのrich_text形式に変換する。"""
+        parts = re.split(r"(\*\*.*?\*\*)", text)
+        result = []
+        for part in parts:
+            if part.startswith("**") and part.endswith("**"):
+                result.append({
+                    "type": "text",
+                    "text": {"content": part[2:-2][:2000]},
+                    "annotations": {"bold": True},
+                })
+            elif part:
+                result.append({"type": "text", "text": {"content": part[:2000]}})
+        return result or [{"type": "text", "text": {"content": ""}}]
+
+    def _to_blocks(text: str) -> list[dict]:
+        """MarkdownテキストをNotionブロックのリストに変換する。"""
+        blocks = []
+        for line in text.splitlines():
+            s = line.rstrip()
+            if s.startswith("# "):
+                blocks.append({"object": "block", "type": "heading_1",
+                                "heading_1": {"rich_text": _parse_rich_text(s[2:])}})
+            elif s.startswith("## "):
+                blocks.append({"object": "block", "type": "heading_2",
+                                "heading_2": {"rich_text": _parse_rich_text(s[3:])}})
+            elif s.startswith("### "):
+                blocks.append({"object": "block", "type": "heading_3",
+                                "heading_3": {"rich_text": _parse_rich_text(s[4:])}})
+            elif s.startswith("- ") or s.startswith("* "):
+                blocks.append({"object": "block", "type": "bulleted_list_item",
+                                "bulleted_list_item": {"rich_text": _parse_rich_text(s[2:])}})
+            elif re.match(r"^\d+\. ", s):
+                content = re.sub(r"^\d+\. ", "", s)
+                blocks.append({"object": "block", "type": "numbered_list_item",
+                                "numbered_list_item": {"rich_text": _parse_rich_text(content)}})
+            elif s in ("---", "***", "___"):
+                blocks.append({"object": "block", "type": "divider", "divider": {}})
+            elif s == "":
+                pass  # 空行はスキップ
+            else:
+                blocks.append({"object": "block", "type": "paragraph",
+                                "paragraph": {"rich_text": _parse_rich_text(s)}})
+        return blocks
+
     url = f"https://api.notion.com/v1/blocks/{page_id}/children"
     headers = {
         "Authorization": f"Bearer {NOTION_TOKEN}",
         "Notion-Version": "2022-06-28",
         "Content-Type": "application/json",
     }
-    lines = [line for line in minutes_text.splitlines() if line.strip()]
-    blocks = [
-        {
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": [{"type": "text", "text": {"content": line[:2000]}}]
-            },
-        }
-        for line in lines
-    ]
+    blocks = _to_blocks(minutes_text)
     # Notion APIは一度に100ブロックまで
     for i in range(0, len(blocks), 100):
         response = httpx.patch(url, headers=headers, json={"children": blocks[i : i + 100]})
         response.raise_for_status()
-    log.info("Notion追記完了: page_id=%s", page_id)
+    log.info("Notion追記完了: page_id=%s (%d blocks)", page_id, len(blocks))
 
 
 def _load_transcript_prompt() -> str:
