@@ -384,16 +384,22 @@ def generate_minutes_with_gemini(transcript_text: str, prompt: str) -> str:
 
 def find_notion_page_by_pdf_name(pdf_name: str) -> str | None:
     """PDFNameプロパティでNotionの面談メモDBを検索してpage_idを返す。"""
-    from notion_client import Client
-    notion = Client(auth=NOTION_TOKEN)
-    results = notion.databases.query(
-        database_id=NOTION_MEMO_DB_ID,
-        filter={
+    import httpx
+    url = f"https://api.notion.com/v1/databases/{NOTION_MEMO_DB_ID}/query"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "filter": {
             "property": "PDFName",
             "formula": {"string": {"equals": pdf_name}},
-        },
-    )
-    pages = results.get("results", [])
+        }
+    }
+    response = httpx.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+    pages = response.json().get("results", [])
     if pages:
         return pages[0]["id"]
     log.warning("NotionページがPDFName '%s' で見つかりませんでした", pdf_name)
@@ -402,8 +408,13 @@ def find_notion_page_by_pdf_name(pdf_name: str) -> str | None:
 
 def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
     """Notionページの本文末尾に議事録テキストを追記する。"""
-    from notion_client import Client
-    notion = Client(auth=NOTION_TOKEN)
+    import httpx
+    url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    }
     lines = [line for line in minutes_text.splitlines() if line.strip()]
     blocks = [
         {
@@ -417,7 +428,8 @@ def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
     ]
     # Notion APIは一度に100ブロックまで
     for i in range(0, len(blocks), 100):
-        notion.blocks.children.append(block_id=page_id, children=blocks[i : i + 100])
+        response = httpx.patch(url, headers=headers, json={"children": blocks[i : i + 100]})
+        response.raise_for_status()
     log.info("Notion追記完了: page_id=%s", page_id)
 
 
