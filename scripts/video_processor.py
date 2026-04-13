@@ -470,6 +470,23 @@ def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
     log.info("Notion追記完了: page_id=%s (%d blocks)", page_id, len(blocks))
 
 
+def save_transcript_as_pdf(txt_path: Path) -> Path | None:
+    """文字起こしテキストをPDFとして保存する（macOS専用・textutil使用）。"""
+    if sys.platform != "darwin":
+        return None
+    pdf_path = txt_path.with_suffix(".pdf")
+    try:
+        subprocess.run(
+            ["textutil", "-convert", "pdf", str(txt_path), "-output", str(pdf_path)],
+            check=True, capture_output=True,
+        )
+        log.info("PDF生成完了: %s", pdf_path.name)
+        return pdf_path
+    except Exception as e:
+        log.warning("PDF生成失敗: %s", e)
+        return None
+
+
 def _load_transcript_prompt() -> str:
     """
     文字起こしプロンプトを返す（非インタラクティブフォールバック）。
@@ -519,7 +536,7 @@ def transcribe_with_gemini(
         )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    txt_path = out_dir / f"{m4a_path.stem}_transcript.txt"
+    txt_path = out_dir / f"文字起こし：{m4a_path.stem}.txt"
 
     log.info("Gemini 文字起こし開始: %s", m4a_path.name)
 
@@ -642,9 +659,12 @@ def process_file(
         except Exception as e:
             log.error("YouTube アップロード失敗: %s", e)
 
+    pdf_path: Path | None = None
     if not skip_transcribe and GEMINI_API_KEY:
         try:
             transcript_path = transcribe_with_gemini(m4a_path, out_dir, prompt_override=prompt_override)
+            if transcript_path:
+                pdf_path = save_transcript_as_pdf(transcript_path)
         except Exception as e:
             log.error("文字起こし失敗: %s", e)
     elif not skip_transcribe and not GEMINI_API_KEY:
@@ -677,6 +697,8 @@ def process_file(
     print(f"  m4a (音声) : {m4a_path}")
     if transcript_path:
         print(f"  文字起こし : {transcript_path}")
+    if pdf_path:
+        print(f"  PDF        : {pdf_path}")
     if youtube_id:
         print(f"  YouTube    : https://youtu.be/{youtube_id}")
     if not transcript_path:
