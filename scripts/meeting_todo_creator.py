@@ -1,35 +1,34 @@
 """
-パイプラインDB の「P&L面談」日時をもとに面談準備・後処理 ToDo を自動作成するスクリプト
+P&L面談 Todo 自動作成スクリプト
 
-【動作概要】
-  パイプラインDB から:
-    - 選考状況 = "P&L面談"
-    - P&L面談日時 が入力済み（日付＋時刻）
-  のレコードを取得し、ToDo DB に以下を作成する:
-    - 面談日時 - 30分: 「面談準備」
-    - 面談日時 + 30分: 「面談後処理」
+【概要】
+NotionのパイプラインDBで「選考状況=P&L面談」かつ「P&L面談」日時プロパティに
+時刻付きの値が入っているレコードを検索し、ToDo DBに以下を自動作成する:
+  - 面談30分前: タイトル「面談準備」
+  - 面談30分後: タイトル「面談後処理」
 
-【重複防止】
-  同一パイプラインに対して既に同タイトルの ToDo が存在する場合はスキップする。
+同一パイプラインに同タイトルのTodoが既存の場合はスキップ（重複防止）。
 
-【セットアップ】
-  .env に以下を設定:
-    NOTION_TOKEN=secret_xxxxx
-    PIPELINE_DB_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-    TODO_DB_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+作成されるTodoのプロパティ:
+  - ステータス: 未着手
+  - TaskType: NextAction 🚀
+  - Category: Pole&Line
+  - 優先度: 高
+  - 開始時刻: 面談±30分
+  - パイプライン: リレーション設定済み
 
 【実行オプション】
-  --dry-run   Notion を更新せず確認のみ
-  --debug     詳細ログを表示
+  python scripts/meeting_todo_creator.py           # 通常実行
+  python scripts/meeting_todo_creator.py --dry-run  # 確認のみ（更新なし）
+  python scripts/meeting_todo_creator.py --debug    # 詳細ログ
 
 【cron 例】毎朝9時
   0 9 * * * cd /path/to/pnl && python scripts/meeting_todo_creator.py >> logs/meeting_todo.log 2>&1
 """
 
-import asyncio
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -40,9 +39,11 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-NOTION_TOKEN = os.environ["NOTION_TOKEN"]
+NOTION_TOKEN  = os.environ["NOTION_TOKEN"]
 PIPELINE_DB_ID = os.environ.get("PIPELINE_DB_ID", "20f7d017b6a0807ca60f000b827c6841")
-TODO_DB_ID = os.environ.get("TODO_DB_ID", "2257d017b6a08026867c000bb0969507")
+TODO_DB_ID     = os.environ.get("TODO_DB_ID",     "2257d017b6a08026867c000bb0969507")
+
+JST = ZoneInfo("Asia/Tokyo")
 
 NOTION_API = "https://api.notion.com/v1"
 NOTION_HEADERS = {
@@ -51,110 +52,95 @@ NOTION_HEADERS = {
     "Content-Type": "application/json",
 }
 
-JST = ZoneInfo("Asia/Tokyo")
+DEBUG   = "--debug"   in sys.argv
 DRY_RUN = "--dry-run" in sys.argv
-DEBUG = "--debug" in sys.argv
 
 
-# ─── Notion: パイプライン取得 ────────────────────────────────────────────────
+# ─── Notion API ────────────────────────────────────────────────────────────────
 
-async def query_pipeline_pnl_meetings(client: httpx.AsyncClient) -> list[dict]:
+def query_pipeline_db() -> list[dict]:
     """
-    パイプラインDB から「選考状況=P&L面談」かつ「P&L面談日時が入力済み」の
-    レコードを全件取得する。
+    パイプラインDBから「選考状況=P&L面談」かつ「P&L面談」日時プロパティに
+    時刻付き（start に時刻が含まれる）値があるレコードを全件取得する。
     """
     results, has_more, cursor = [], True, None
 
-    while has_more:
-        payload: dict = {
-            "filter": {
-                "and": [
-                    {
-                        "property": "選考状況",
-                        "status": {"equals": "P&L面談"},
-                    },
-                    {
-                        "property": "P&L面談",
-                        "date": {"is_not_empty": True},
-                    },
-                ]
-            },
-            "page_size": 100,
-        }
-        if cursor:
-            payload["start_cursor"] = cursor
+    with httpx.Client(timeout=30) as client:
+        while has_more:
+            payload: dict = {
+                "filter": {
+                    "and": [
+                        {
+                            "property": "選考状況",
+                            "status": {"equals": "P&L面談"},
+                        },
+                        {
+                            "property": "P&L面談",
+                            "date": {"is_not_empty": True},
+                        },
+                    ]
+                },
+                "page_size": 100,
+            }
+            if cursor:
+                payload["start_cursor"] = cursor
 
-        res = await client.post(
-            f"{NOTION_API}/databases/{PIPELINE_DB_ID}/query",
-            headers=NOTION_HEADERS,
-            json=payload,
-        )
-        res.raise_for_status()
-        data = res.json()
-        results.extend(data["results"])
-        has_more = data.get("has_more", False)
-        cursor = data.get("next_cursor")
+            res = client.post(
+                f"{NOTION_API}/databases/{PIPELINE_DB_ID}/query",
+                headers=NOTION_HEADERS,
+                json=payload,
+            )
+            res.raise_for_status()
+            data = res.json()
+            results.extend(data["results"])
+            has_more = data.get("has_more", False)
+            cursor   = data.get("next_cursor")
 
     return results
 
 
-# ─── Notion: ToDo 既存チェック ───────────────────────────────────────────────
-
-async def get_existing_todo_titles(
-    pipeline_page_id: str,
-    client: httpx.AsyncClient,
-) -> set[str]:
+def get_existing_todos(pipeline_page_id: str) -> list[dict]:
     """
-    ToDo DB から指定パイプラインに紐づく Todo のタイトル一覧を返す。
-    重複作成防止に使用する。
+    指定パイプラインに紐づく ToDo レコードを全件取得する（重複チェック用）。
     """
-    titles: set[str] = set()
-    has_more, cursor = True, None
+    results, has_more, cursor = [], True, None
 
-    while has_more:
-        payload: dict = {
-            "filter": {
-                "property": "パイプライン",
-                "relation": {"contains": pipeline_page_id},
-            },
-            "page_size": 100,
-        }
-        if cursor:
-            payload["start_cursor"] = cursor
+    with httpx.Client(timeout=30) as client:
+        while has_more:
+            payload: dict = {
+                "filter": {
+                    "property": "パイプライン",
+                    "relation": {"contains": pipeline_page_id},
+                },
+                "page_size": 100,
+            }
+            if cursor:
+                payload["start_cursor"] = cursor
 
-        res = await client.post(
-            f"{NOTION_API}/databases/{TODO_DB_ID}/query",
-            headers=NOTION_HEADERS,
-            json=payload,
-        )
-        res.raise_for_status()
-        data = res.json()
+            res = client.post(
+                f"{NOTION_API}/databases/{TODO_DB_ID}/query",
+                headers=NOTION_HEADERS,
+                json=payload,
+            )
+            res.raise_for_status()
+            data = res.json()
+            results.extend(data["results"])
+            has_more = data.get("has_more", False)
+            cursor   = data.get("next_cursor")
 
-        for page in data["results"]:
-            title_parts = page["properties"].get("Title", {}).get("title", [])
-            title = "".join(t.get("plain_text", "") for t in title_parts)
-            if title:
-                titles.add(title)
-
-        has_more = data.get("has_more", False)
-        cursor = data.get("next_cursor")
-
-    return titles
+    return results
 
 
-# ─── Notion: ToDo 作成 ───────────────────────────────────────────────────────
-
-async def create_todo(
+def create_todo(
     title: str,
-    start_time: datetime,
+    start_dt: datetime,
     pipeline_page_id: str,
-    client: httpx.AsyncClient,
 ) -> dict:
     """
-    ToDo DB に新しいタスクを作成する。
-    パイプラインリレーションを設定し、開始時刻に面談の前後30分を指定する。
+    ToDo DBに新しいレコードを作成する。
     """
-    start_str = start_time.astimezone(JST).isoformat()
+    # Notion API は ISO 8601 形式（タイムゾーン付き）を受け付ける
+    start_iso = start_dt.isoformat()
 
     payload = {
         "parent": {"database_id": TODO_DB_ID},
@@ -175,7 +161,7 @@ async def create_todo(
                 "select": {"name": "高"}
             },
             "開始時刻": {
-                "date": {"start": start_str}
+                "date": {"start": start_iso}
             },
             "パイプライン": {
                 "relation": [{"id": pipeline_page_id}]
@@ -183,140 +169,168 @@ async def create_todo(
         },
     }
 
-    res = await client.post(
-        f"{NOTION_API}/pages",
-        headers=NOTION_HEADERS,
-        json=payload,
-    )
-    res.raise_for_status()
-    return res.json()
+    with httpx.Client(timeout=30) as client:
+        res = client.post(
+            f"{NOTION_API}/pages",
+            headers=NOTION_HEADERS,
+            json=payload,
+        )
+        res.raise_for_status()
+        return res.json()
 
 
-# ─── 日時パース ──────────────────────────────────────────────────────────────
+# ─── ヘルパー ───────────────────────────────────────────────────────────────────
 
-def parse_notion_datetime(start_str: str) -> datetime | None:
+def extract_pipeline_name(page: dict) -> str:
+    """パイプラインページからタイトル（名前）を取得する"""
+    title_parts = page["properties"].get("名前", {}).get("title", [])
+    return "".join(t.get("plain_text", "") for t in title_parts) or page["id"]
+
+
+def parse_meeting_datetime(page: dict) -> datetime | None:
     """
-    Notion の date プロパティ start 文字列を datetime に変換する。
-    日付のみ（時刻なし）の場合は None を返す。
-
-    対応フォーマット:
-      "2026-04-14T10:00:00.000+09:00"  → datetime（JST）
-      "2026-04-14T01:00:00.000Z"       → datetime（UTC→JST）
-      "2026-04-14T10:00:00+09:00"      → datetime（JST）
-      "2026-04-14"                     → None（時刻なし）
+    「P&L面談」プロパティから datetime を取得する。
+    時刻なし（日付のみ）の場合は None を返す。
     """
-    if "T" not in start_str:
-        return None  # 日付のみ（時刻情報なし）
-
-    # "Z" を UTC オフセットに変換してパース
-    normalized = start_str.replace("Z", "+00:00")
-    try:
-        return datetime.fromisoformat(normalized)
-    except ValueError:
+    date_prop = page["properties"].get("P&L面談", {}).get("date")
+    if not date_prop:
         return None
+
+    start_str = date_prop.get("start")
+    if not start_str:
+        return None
+
+    # 時刻情報が含まれているか確認（Tが含まれる場合のみ）
+    if "T" not in start_str:
+        if DEBUG:
+            print(f"  [DEBUG] 日付のみ（時刻なし）のためスキップ: {start_str}")
+        return None
+
+    # ISO 8601 形式をパース
+    try:
+        dt = datetime.fromisoformat(start_str)
+        # タイムゾーンがない場合はJSTとみなす
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=JST)
+        return dt
+    except ValueError as e:
+        if DEBUG:
+            print(f"  [DEBUG] 日時パース失敗: {start_str!r} → {e}")
+        return None
+
+
+def get_existing_todo_titles(pipeline_page_id: str) -> set[str]:
+    """既存ToDoのタイトル一覧をセットで返す（重複チェック用）"""
+    todos = get_existing_todos(pipeline_page_id)
+    titles = set()
+    for todo in todos:
+        title_parts = todo["properties"].get("Title", {}).get("title", [])
+        title = "".join(t.get("plain_text", "") for t in title_parts)
+        if title:
+            titles.add(title)
+    return titles
 
 
 # ─── メイン処理 ───────────────────────────────────────────────────────────────
 
-async def main() -> None:
+def main() -> None:
     ts = datetime.now(tz=JST).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] P&L面談 ToDo 自動作成 開始")
+    print(f"[{ts}] P&L面談 Todo 自動作成スクリプト開始")
 
     if DRY_RUN:
         print("⚠️  --dry-run モード: Notion の更新は行いません")
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        # ① パイプラインを取得
-        print("\n🔍 パイプラインDB から P&L面談エントリを取得中...")
-        try:
-            pipelines = await query_pipeline_pnl_meetings(client)
-        except httpx.HTTPStatusError as e:
-            print(f"❌ パイプラインDB 取得失敗: {e.response.status_code} {e.response.text}")
-            sys.exit(1)
+    # ① パイプラインDB から P&L面談のレコードを取得
+    print("\n📋 パイプラインDBから「P&L面談」レコードを取得中...")
+    try:
+        pipeline_pages = query_pipeline_db()
+    except httpx.HTTPStatusError as e:
+        print(f"❌ パイプラインDB取得失敗: {e.response.status_code} {e.response.text}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ パイプラインDB取得失敗: {e}")
+        sys.exit(1)
 
-        print(f"   {len(pipelines)} 件取得")
+    print(f"   {len(pipeline_pages)} 件取得（選考状況=P&L面談 かつ 面談日時あり）")
 
-        if not pipelines:
-            print("ℹ️  対象のパイプラインが見つかりませんでした。")
-            return
+    if not pipeline_pages:
+        print("ℹ️  対象レコードが見つかりませんでした。")
+        return
 
-        created_count = 0
-        skipped_count = 0
+    # ② 各レコードに対して面談前後のToDoを作成
+    created_count = 0
+    skipped_count = 0
 
-        # ② 各パイプラインに対して Todo を作成
-        for pipeline in pipelines:
-            page_id = pipeline["id"]
+    for page in pipeline_pages:
+        pipeline_id   = page["id"]
+        pipeline_name = extract_pipeline_name(page)
+        meeting_dt    = parse_meeting_datetime(page)
 
-            # パイプライン名
-            title_parts = pipeline["properties"].get("名前", {}).get("title", [])
-            pipeline_name = "".join(t.get("plain_text", "") for t in title_parts) or page_id
-
-            # P&L面談の日時
-            meeting_date_prop = pipeline["properties"].get("P&L面談", {}).get("date")
-            if not meeting_date_prop or not meeting_date_prop.get("start"):
-                if DEBUG:
-                    print(f"  [DEBUG] スキップ（日時なし）: {pipeline_name!r}")
-                continue
-
-            start_str = meeting_date_prop["start"]
-            meeting_dt = parse_notion_datetime(start_str)
-
-            if meeting_dt is None:
-                print(f"  ⏭️  スキップ（時刻なし・日付のみ）: {pipeline_name!r}  ({start_str})")
-                skipped_count += 1
-                continue
-
-            prep_time = meeting_dt - timedelta(minutes=30)
-            followup_time = meeting_dt + timedelta(minutes=30)
-
+        if meeting_dt is None:
             if DEBUG:
-                print(f"\n  [DEBUG] {pipeline_name!r}")
-                print(f"         面談:    {meeting_dt.astimezone(JST).strftime('%Y-%m-%d %H:%M')} JST")
-                print(f"         面談準備: {prep_time.astimezone(JST).strftime('%Y-%m-%d %H:%M')} JST")
-                print(f"         面談後処理: {followup_time.astimezone(JST).strftime('%Y-%m-%d %H:%M')} JST")
+                print(f"\n  [DEBUG] {pipeline_name!r}: 時刻なし → スキップ")
+            continue
 
-            # ③ 既存 Todo を確認（重複防止）
-            try:
-                existing_titles = await get_existing_todo_titles(page_id, client)
-            except httpx.HTTPStatusError as e:
-                print(f"  ⚠️  既存Todo確認失敗 ({pipeline_name!r}): {e.response.status_code}")
+        meeting_dt_jst = meeting_dt.astimezone(JST)
+
+        # 現在時刻より過去の面談はスキップ
+        now = datetime.now(tz=JST)
+        if meeting_dt_jst < now:
+            print(f"\n  パイプライン: {pipeline_name!r}")
+            print(f"  面談日時: {meeting_dt_jst.strftime('%Y-%m-%d %H:%M')} JST → 過去のためスキップ")
+            continue
+
+        print(f"\n  パイプライン: {pipeline_name!r}")
+        print(f"  面談日時: {meeting_dt_jst.strftime('%Y-%m-%d %H:%M')} JST")
+
+        # 既存ToDo取得（重複チェック）
+        try:
+            existing_titles = get_existing_todo_titles(pipeline_id)
+        except Exception as e:
+            print(f"  ⚠️  既存ToDo取得失敗: {e} → スキップ")
+            continue
+
+        if DEBUG:
+            print(f"  [DEBUG] 既存ToDoタイトル: {existing_titles}")
+
+        # 面談30分前: 「面談準備」
+        before_title = "面談準備"
+        before_dt    = meeting_dt - timedelta(minutes=30)
+
+        # 面談30分後: 「面談後処理」
+        after_title = "面談後処理"
+        after_dt    = meeting_dt + timedelta(minutes=30)
+
+        for title, start_dt in [(before_title, before_dt), (after_title, after_dt)]:
+            start_dt_jst = start_dt.astimezone(JST)
+
+            if title in existing_titles:
+                print(f"  ⏭️  スキップ（既存）: 「{title}」 @ {start_dt_jst.strftime('%H:%M')}")
+                skipped_count += 1
                 continue
 
-            if DEBUG and existing_titles:
-                print(f"  [DEBUG] 既存Todo: {existing_titles}")
+            if DRY_RUN:
+                print(f"  [dry-run] 作成予定: 「{title}」 @ {start_dt_jst.strftime('%Y-%m-%d %H:%M')} JST")
+                created_count += 1
+            else:
+                try:
+                    create_todo(
+                        title=title,
+                        start_dt=start_dt,
+                        pipeline_page_id=pipeline_id,
+                    )
+                    print(f"  ✅ 作成: 「{title}」 @ {start_dt_jst.strftime('%Y-%m-%d %H:%M')} JST")
+                    created_count += 1
+                except httpx.HTTPStatusError as e:
+                    print(f"  ❌ 作成失敗 ({title}): {e.response.status_code} {e.response.text}")
+                except Exception as e:
+                    print(f"  ❌ 作成失敗 ({title}): {e}")
 
-            todos_to_create = [
-                ("面談準備", prep_time),
-                ("面談後処理", followup_time),
-            ]
-
-            all_skipped = True
-            for todo_title, todo_time in todos_to_create:
-                if todo_title in existing_titles:
-                    if DEBUG:
-                        print(f"  [DEBUG] スキップ（既存）: {todo_title!r} → {pipeline_name!r}")
-                    continue
-
-                all_skipped = False
-                time_str = todo_time.astimezone(JST).strftime("%Y-%m-%d %H:%M")
-
-                if DRY_RUN:
-                    print(f"  [dry-run] 作成予定: 「{todo_title}」@ {time_str} JST → {pipeline_name!r}")
-                else:
-                    try:
-                        await create_todo(todo_title, todo_time, page_id, client)
-                        print(f"  ✅ 作成: 「{todo_title}」@ {time_str} JST → {pipeline_name!r}")
-                        created_count += 1
-                    except httpx.HTTPStatusError as e:
-                        print(f"  ❌ 作成失敗 ({todo_title!r}): {e.response.status_code} {e.response.text}")
-
-            if all_skipped:
-                print(f"  ✅ スキップ（既存）: {pipeline_name!r}")
-                skipped_count += 1
-
+    # ③ 結果サマリー
     ts_end = datetime.now(tz=JST).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n[{ts_end}] 完了: {created_count} 件作成, {skipped_count} 件スキップ")
+    action = "作成予定" if DRY_RUN else "作成"
+    print(f"\n[{ts_end}] 完了: {action}={created_count} 件, スキップ={skipped_count} 件")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
