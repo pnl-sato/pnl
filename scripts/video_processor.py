@@ -470,58 +470,34 @@ def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
     log.info("Notion追記完了: page_id=%s (%d blocks)", page_id, len(blocks))
 
 
-def save_transcript_as_pdf(txt_path: Path) -> Path | None:
-    """文字起こしテキストをDOCX経由でPDFとして保存する（Pages AppleScript使用）。"""
-    try:
-        from docx import Document
-        from docx.shared import Pt
-    except ImportError:
-        log.warning("PDF生成失敗: pip install python-docx が必要です")
+def save_transcript_as_pdf(docx_path: Path) -> Path | None:
+    """DOCXファイルをPDFとして保存する（Pages AppleScript使用）。"""
+    if sys.platform != "darwin":
         return None
 
-    docx_path = txt_path.with_suffix(".docx")
-    pdf_path = txt_path.with_suffix(".pdf")
+    pdf_path = docx_path.with_suffix(".pdf")
+    applescript = "\n".join([
+        'tell application "Pages"',
+        f'  set theDoc to open POSIX file "{str(docx_path)}"',
+        "  delay 2",
+        f'  export theDoc to POSIX file "{str(pdf_path)}" as PDF',
+        "  close theDoc saving no",
+        "end tell",
+    ])
     try:
-        text = txt_path.read_text(encoding="utf-8")
-        doc = Document()
-        style = doc.styles["Normal"]
-        style.font.size = Pt(10)
-        for line in text.splitlines():
-            doc.add_paragraph(line)
-        doc.save(str(docx_path))
-
-        if sys.platform == "darwin":
-            applescript = "\n".join([
-                'tell application "Pages"',
-                f'  set theDoc to open POSIX file "{str(docx_path)}"',
-                "  delay 2",
-                f'  export theDoc to POSIX file "{str(pdf_path)}" as PDF',
-                "  close theDoc saving no",
-                "end tell",
-            ])
-            try:
-                result = subprocess.run(
-                    ["osascript", "-e", applescript],
-                    capture_output=True, text=True,
-                    timeout=60,
-                )
-            except subprocess.TimeoutExpired:
-                log.warning("PDF変換タイムアウト（Pages）")
-                docx_path.unlink(missing_ok=True)
-                return None
-            docx_path.unlink(missing_ok=True)
-            if result.returncode == 0 and pdf_path.exists():
-                log.info("PDF生成完了: %s", pdf_path.name)
-                return pdf_path
-            log.warning("PDF変換失敗（Pages）: rc=%d %s", result.returncode, result.stderr.strip())
-            return None
-        else:
-            log.info("DOCX生成完了: %s", docx_path.name)
-            return docx_path
-    except Exception as e:
-        docx_path.unlink(missing_ok=True)
-        log.warning("PDF生成失敗: %s", e)
+        result = subprocess.run(
+            ["osascript", "-e", applescript],
+            capture_output=True, text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        log.warning("PDF変換タイムアウト（Pages）")
         return None
+    if result.returncode == 0 and pdf_path.exists():
+        log.info("PDF生成完了: %s", pdf_path.name)
+        return pdf_path
+    log.warning("PDF変換失敗（Pages）: rc=%d %s", result.returncode, result.stderr.strip())
+    return None
 
 
 def _load_transcript_prompt() -> str:
@@ -573,7 +549,7 @@ def transcribe_with_gemini(
         )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    txt_path = out_dir / f"文字起こし：{m4a_path.stem}.txt"
+    docx_path = out_dir / f"文字起こし：{m4a_path.stem}.docx"
 
     log.info("Gemini 文字起こし開始: %s", m4a_path.name)
 
@@ -618,18 +594,29 @@ def transcribe_with_gemini(
 
     transcript = response.text.strip()
 
-    # ヘッダーを付けて保存
-    header = (
-        f"# 文字起こし\n"
-        f"# ファイル : {m4a_path.name}\n"
-        f"# 作成日時 : {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        f"# モデル  : {GEMINI_MODEL}\n"
-        f"{'─' * 60}\n\n"
-    )
-    txt_path.write_text(header + transcript, encoding="utf-8")
-    log.info("文字起こし完了: %s", txt_path.name)
+    # ヘッダー行 + 文字起こし本文を DOCX として保存
+    try:
+        from docx import Document
+        from docx.shared import Pt
+    except ImportError:
+        raise ImportError("python-docx が未インストールです。pip install python-docx を実行してください。")
 
-    return txt_path
+    header_lines = [
+        "# 文字起こし",
+        f"# ファイル : {m4a_path.name}",
+        f"# 作成日時 : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"# モデル  : {GEMINI_MODEL}",
+        "─" * 60,
+        "",
+    ]
+    doc = Document()
+    doc.styles["Normal"].font.size = Pt(10)
+    for line in header_lines + transcript.splitlines():
+        doc.add_paragraph(line)
+    doc.save(str(docx_path))
+    log.info("文字起こし完了: %s", docx_path.name)
+
+    return docx_path
 
 
 # ─── タイトル生成 ─────────────────────────────────────────────────────────────
@@ -710,7 +697,9 @@ def process_file(
     # 3. Notion 議事録追記
     if transcript_path and minutes_prompt and NOTION_TOKEN and NOTION_MEMO_DB_ID:
         try:
-            transcript_text = transcript_path.read_text(encoding="utf-8")
+            from docx import Document as _DocxDoc
+            _doc = _DocxDoc(str(transcript_path))
+            transcript_text = "\n".join(p.text for p in _doc.paragraphs)
             log.info("議事録を生成中...")
             minutes_text = generate_minutes_with_gemini(transcript_text, minutes_prompt)
             pdf_name = mov_path.stem
