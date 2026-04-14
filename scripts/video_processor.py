@@ -478,17 +478,19 @@ def save_transcript_as_pdf(docx_path: Path) -> Path | None:
     pdf_path = docx_path.with_suffix(".pdf")
     applescript = "\n".join([
         'tell application "Pages"',
-        f'  set theDoc to open POSIX file "{str(docx_path)}"',
-        "  delay 2",
-        f'  export theDoc to POSIX file "{str(pdf_path)}" as PDF',
-        "  close theDoc saving no",
+        "  activate",
+        "  delay 1",
+        f'  open POSIX file "{str(docx_path)}"',
+        "  delay 3",
+        f'  export front document to POSIX file "{str(pdf_path)}" as PDF',
+        "  close front document saving no",
         "end tell",
     ])
     try:
         result = subprocess.run(
             ["osascript", "-e", applescript],
             capture_output=True, text=True,
-            timeout=60,
+            timeout=90,
         )
     except subprocess.TimeoutExpired:
         log.warning("PDF変換タイムアウト（Pages）")
