@@ -471,42 +471,41 @@ def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
 
 
 def save_transcript_as_pdf(txt_path: Path) -> Path | None:
-    """文字起こしテキストをPDFとして保存する（reportlab + 日本語CIDフォント使用）。"""
+    """文字起こしテキストをDOCX経由でPDFとして保存する（textutil使用）。"""
     try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import mm
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-        from reportlab.lib.styles import ParagraphStyle
-        import html as html_module
+        from docx import Document
+        from docx.shared import Pt
     except ImportError:
-        log.warning("PDF生成失敗: pip install reportlab が必要です")
+        log.warning("PDF生成失敗: pip install python-docx が必要です")
         return None
 
+    docx_path = txt_path.with_suffix(".docx")
     pdf_path = txt_path.with_suffix(".pdf")
     try:
-        pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
-        doc = SimpleDocTemplate(
-            str(pdf_path), pagesize=A4,
-            leftMargin=20 * mm, rightMargin=20 * mm,
-            topMargin=20 * mm, bottomMargin=20 * mm,
-        )
-        style = ParagraphStyle(
-            "Japanese", fontName="HeiseiKakuGo-W5",
-            fontSize=9, leading=14, wordWrap="CJK",
-        )
         text = txt_path.read_text(encoding="utf-8")
-        story = []
+        doc = Document()
+        style = doc.styles["Normal"]
+        style.font.size = Pt(10)
         for line in text.splitlines():
-            if line.strip():
-                story.append(Paragraph(html_module.escape(line), style))
-            else:
-                story.append(Spacer(1, 4 * mm))
-        doc.build(story)
-        log.info("PDF生成完了: %s", pdf_path.name)
-        return pdf_path
+            doc.add_paragraph(line)
+        doc.save(str(docx_path))
+
+        if sys.platform == "darwin":
+            result = subprocess.run(
+                ["textutil", "-convert", "pdf", str(docx_path), "-output", str(pdf_path)],
+                capture_output=True, text=True,
+            )
+            docx_path.unlink(missing_ok=True)
+            if result.returncode == 0:
+                log.info("PDF生成完了: %s", pdf_path.name)
+                return pdf_path
+            log.warning("PDF変換失敗（textutil）: %s", result.stderr.strip())
+            return None
+        else:
+            log.info("DOCX生成完了: %s", docx_path.name)
+            return docx_path
     except Exception as e:
+        docx_path.unlink(missing_ok=True)
         log.warning("PDF生成失敗: %s", e)
         return None
 
