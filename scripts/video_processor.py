@@ -477,7 +477,7 @@ def save_transcript_as_pdf(txt_path: Path) -> Path | None:
     pdf_path = txt_path.with_suffix(".pdf")
     try:
         subprocess.run(
-            ["textutil", "-convert", "pdf", str(txt_path), "-output", str(pdf_path)],
+            ["textutil", "-convert", "pdf", "-encoding", "UTF-8", str(txt_path), "-output", str(pdf_path)],
             check=True, capture_output=True,
         )
         log.info("PDF生成完了: %s", pdf_path.name)
