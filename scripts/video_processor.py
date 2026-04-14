@@ -493,12 +493,15 @@ def save_transcript_as_pdf(txt_path: Path) -> Path | None:
     pdf_path = txt_path.with_suffix(".pdf")
     try:
         pdf = FPDF()
+        pdf.set_margins(left=15, top=15, right=15)
+        pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
         pdf.add_font("Japanese", fname=font_path)
-        pdf.set_font("Japanese", size=10)
+        pdf.set_font("Japanese", size=9)
+        w = pdf.w - 30  # ページ幅 - 左右マージン合計
         text = txt_path.read_text(encoding="utf-8")
         for line in text.splitlines():
-            pdf.multi_cell(0, 6, line if line else " ")
+            pdf.multi_cell(w, 5, line if line.strip() else " ")
         pdf.output(str(pdf_path))
         log.info("PDF生成完了: %s", pdf_path.name)
         return pdf_path
