@@ -471,38 +471,39 @@ def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
 
 
 def save_transcript_as_pdf(txt_path: Path) -> Path | None:
-    """文字起こしテキストをPDFとして保存する（fpdf2 + 日本語フォント使用）。"""
+    """文字起こしテキストをPDFとして保存する（reportlab + 日本語CIDフォント使用）。"""
     try:
-        from fpdf import FPDF
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+        from reportlab.lib.styles import ParagraphStyle
+        import html as html_module
     except ImportError:
-        log.warning("PDF生成失敗: fpdf2が未インストール (pip install fpdf2)")
-        return None
-
-    # macOS上の日本語フォントを探す
-    font_candidates = [
-        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
-        "/System/Library/Fonts/Hiragino Sans W3.ttc",
-        "/Library/Fonts/Arial Unicode MS.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Unicode MS.ttf",
-    ]
-    font_path = next((f for f in font_candidates if Path(f).exists()), None)
-    if not font_path:
-        log.warning("PDF生成失敗: 日本語フォントが見つかりません")
+        log.warning("PDF生成失敗: pip install reportlab が必要です")
         return None
 
     pdf_path = txt_path.with_suffix(".pdf")
     try:
-        pdf = FPDF()
-        pdf.set_margins(left=15, top=15, right=15)
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-        pdf.add_font("Japanese", fname=font_path)
-        pdf.set_font("Japanese", size=9)
-        w = pdf.w - 30  # ページ幅 - 左右マージン合計
+        pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
+        doc = SimpleDocTemplate(
+            str(pdf_path), pagesize=A4,
+            leftMargin=20 * mm, rightMargin=20 * mm,
+            topMargin=20 * mm, bottomMargin=20 * mm,
+        )
+        style = ParagraphStyle(
+            "Japanese", fontName="HeiseiKakuGo-W5",
+            fontSize=9, leading=14, wordWrap="CJK",
+        )
         text = txt_path.read_text(encoding="utf-8")
+        story = []
         for line in text.splitlines():
-            pdf.multi_cell(w, 5, line if line.strip() else " ")
-        pdf.output(str(pdf_path))
+            if line.strip():
+                story.append(Paragraph(html_module.escape(line), style))
+            else:
+                story.append(Spacer(1, 4 * mm))
+        doc.build(story)
         log.info("PDF生成完了: %s", pdf_path.name)
         return pdf_path
     except Exception as e:
