@@ -8,3 +8,4 @@ google-auth-oauthlib>=1.2.0
 google-genai>=1.0.0
 watchdog>=4.0.0
 python-docx>=1.0.0
+weasyprint>=61.0

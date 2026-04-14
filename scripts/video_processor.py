@@ -471,35 +471,47 @@ def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
 
 
 def save_transcript_as_pdf(docx_path: Path) -> Path | None:
-    """DOCXファイルをPDFとして保存する（Pages AppleScript使用）。"""
-    if sys.platform != "darwin":
+    """DOCXファイルをWeasyPrintでPDFに変換する（サイレント・バックグラウンド動作）。"""
+    try:
+        import html as html_module
+        import weasyprint
+        from docx import Document
+    except ImportError:
+        log.warning("PDF生成失敗: pip install weasyprint が必要です")
         return None
 
     pdf_path = docx_path.with_suffix(".pdf")
-    applescript = "\n".join([
-        'tell application "Pages"',
-        "  activate",
-        "  delay 1",
-        f'  open POSIX file "{str(docx_path)}"',
-        "  delay 3",
-        f'  export front document to POSIX file "{str(pdf_path)}" as PDF',
-        "  close front document saving no",
-        "end tell",
-    ])
     try:
-        result = subprocess.run(
-            ["osascript", "-e", applescript],
-            capture_output=True, text=True,
-            timeout=90,
+        doc = Document(str(docx_path))
+        lines = [p.text for p in doc.paragraphs]
+        body_html = "\n".join(
+            f"<p>{html_module.escape(line)}</p>" if line.strip() else "<p>&nbsp;</p>"
+            for line in lines
         )
-    except subprocess.TimeoutExpired:
-        log.warning("PDF変換タイムアウト（Pages）")
-        return None
-    if result.returncode == 0 and pdf_path.exists():
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page {{ margin: 20mm; }}
+  body {{
+    font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
+    font-size: 10pt;
+    line-height: 1.7;
+  }}
+  p {{ margin: 0 0 3pt 0; }}
+</style>
+</head>
+<body>
+{body_html}
+</body>
+</html>"""
+        weasyprint.HTML(string=html_content).write_pdf(str(pdf_path))
         log.info("PDF生成完了: %s", pdf_path.name)
         return pdf_path
-    log.warning("PDF変換失敗（Pages）: rc=%d %s", result.returncode, result.stderr.strip())
-    return None
+    except Exception as e:
+        log.warning("PDF生成失敗: %s", e)
+        return None
 
 
 def _load_transcript_prompt() -> str:
