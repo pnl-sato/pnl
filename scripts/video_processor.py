@@ -471,7 +471,7 @@ def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
 
 
 def save_transcript_as_pdf(txt_path: Path) -> Path | None:
-    """文字起こしテキストをDOCX経由でPDFとして保存する（textutil使用）。"""
+    """文字起こしテキストをDOCX経由でPDFとして保存する（Pages AppleScript使用）。"""
     try:
         from docx import Document
         from docx.shared import Pt
@@ -491,15 +491,29 @@ def save_transcript_as_pdf(txt_path: Path) -> Path | None:
         doc.save(str(docx_path))
 
         if sys.platform == "darwin":
-            result = subprocess.run(
-                ["textutil", "-convert", "pdf", str(docx_path), "-output", str(pdf_path)],
-                capture_output=True, text=True,
-            )
+            applescript = "\n".join([
+                'tell application "Pages"',
+                f'  set theDoc to open POSIX file "{str(docx_path)}"',
+                "  delay 2",
+                f'  export theDoc to POSIX file "{str(pdf_path)}" as PDF',
+                "  close theDoc saving no",
+                "end tell",
+            ])
+            try:
+                result = subprocess.run(
+                    ["osascript", "-e", applescript],
+                    capture_output=True, text=True,
+                    timeout=60,
+                )
+            except subprocess.TimeoutExpired:
+                log.warning("PDF変換タイムアウト（Pages）")
+                docx_path.unlink(missing_ok=True)
+                return None
             docx_path.unlink(missing_ok=True)
-            if result.returncode == 0:
+            if result.returncode == 0 and pdf_path.exists():
                 log.info("PDF生成完了: %s", pdf_path.name)
                 return pdf_path
-            log.warning("PDF変換失敗（textutil）: %s", result.stderr.strip())
+            log.warning("PDF変換失敗（Pages）: rc=%d %s", result.returncode, result.stderr.strip())
             return None
         else:
             log.info("DOCX生成完了: %s", docx_path.name)
