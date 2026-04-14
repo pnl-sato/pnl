@@ -471,15 +471,35 @@ def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
 
 
 def save_transcript_as_pdf(txt_path: Path) -> Path | None:
-    """文字起こしテキストをPDFとして保存する（macOS専用・textutil使用）。"""
-    if sys.platform != "darwin":
+    """文字起こしテキストをPDFとして保存する（fpdf2 + 日本語フォント使用）。"""
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        log.warning("PDF生成失敗: fpdf2が未インストール (pip install fpdf2)")
         return None
+
+    # macOS上の日本語フォントを探す
+    font_candidates = [
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/Hiragino Sans W3.ttc",
+        "/Library/Fonts/Arial Unicode MS.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Unicode MS.ttf",
+    ]
+    font_path = next((f for f in font_candidates if Path(f).exists()), None)
+    if not font_path:
+        log.warning("PDF生成失敗: 日本語フォントが見つかりません")
+        return None
+
     pdf_path = txt_path.with_suffix(".pdf")
     try:
-        subprocess.run(
-            ["textutil", "-convert", "pdf", "-encoding", "UTF-8", str(txt_path), "-output", str(pdf_path)],
-            check=True, capture_output=True,
-        )
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.add_font("Japanese", fname=font_path)
+        pdf.set_font("Japanese", size=10)
+        text = txt_path.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            pdf.multi_cell(0, 6, line if line else " ")
+        pdf.output(str(pdf_path))
         log.info("PDF生成完了: %s", pdf_path.name)
         return pdf_path
     except Exception as e:
