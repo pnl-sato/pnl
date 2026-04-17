@@ -89,6 +89,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # 文字起こしに使用する Gemini モデル
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
+# モデルが廃止・利用不可の場合に順番に試すフォールバックリスト
+_GEMINI_FALLBACK_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+]
+
 # 文字起こしプロンプトファイルのパス（単一ファイル指定）
 # 未指定またはファイルが存在しない場合はデフォルトプロンプトを使用
 TRANSCRIPT_PROMPT_FILE = os.getenv("TRANSCRIPT_PROMPT_FILE", "")
@@ -378,7 +385,7 @@ def generate_minutes_with_gemini(transcript_text: str, prompt: str) -> str:
     from google import genai
     client = genai.Client(api_key=GEMINI_API_KEY)
     full_prompt = f"{prompt}\n\n---\n\n{transcript_text}"
-    response = client.models.generate_content(model=GEMINI_MODEL, contents=full_prompt)
+    response, _ = _generate_with_fallback(client, GEMINI_MODEL, contents=full_prompt)
     return response.text
 
 
@@ -468,6 +475,39 @@ def append_minutes_to_notion(page_id: str, minutes_text: str) -> None:
         response = httpx.patch(url, headers=headers, json={"children": blocks[i : i + 100]})
         response.raise_for_status()
     log.info("Notion追記完了: page_id=%s (%d blocks)", page_id, len(blocks))
+
+
+def _notify_macos(title: str, message: str) -> None:
+    """macOS デスクトップ通知を送る。"""
+    if sys.platform == "darwin":
+        subprocess.run(
+            ["osascript", "-e", f'display notification "{message}" with title "{title}"'],
+            capture_output=True, check=False,
+        )
+
+
+def _generate_with_fallback(client, primary_model: str, **kwargs):
+    """モデルが廃止・利用不可の場合フォールバックモデルを順番に試す。"""
+    try:
+        from google.genai.errors import ClientError
+    except ImportError:
+        return client.models.generate_content(model=primary_model, **kwargs), primary_model
+
+    models_to_try = [primary_model] + [m for m in _GEMINI_FALLBACK_MODELS if m != primary_model]
+    last_exc: Exception = RuntimeError("モデルリストが空です")
+    for model in models_to_try:
+        try:
+            response = client.models.generate_content(model=model, **kwargs)
+            if model != primary_model:
+                log.warning("フォールバックモデルを使用しました: %s", model)
+            return response, model
+        except ClientError as e:
+            if getattr(e, "status_code", None) == 404:
+                log.warning("モデル利用不可 (%s)、次を試します...", model)
+                last_exc = e
+                continue
+            raise
+    raise last_exc
 
 
 def save_transcript_as_pdf(docx_path: Path) -> Path | None:
@@ -588,8 +628,8 @@ def transcribe_with_gemini(
 
     # 文字起こし実行（選択プロンプト > TRANSCRIPT_PROMPT_FILE > デフォルト）
     prompt = prompt_override if prompt_override is not None else _load_transcript_prompt()
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
+    response, used_model = _generate_with_fallback(
+        client, GEMINI_MODEL,
         contents=[
             types.Content(parts=[
                 types.Part(file_data=types.FileData(
@@ -619,7 +659,7 @@ def transcribe_with_gemini(
         "# 文字起こし",
         f"# ファイル : {m4a_path.name}",
         f"# 作成日時 : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"# モデル  : {GEMINI_MODEL}",
+        f"# モデル  : {used_model}",
         "─" * 60,
         "",
     ]
@@ -705,6 +745,7 @@ def process_file(
                 pdf_path = save_transcript_as_pdf(transcript_path)
         except Exception as e:
             log.error("文字起こし失敗: %s", e)
+            _notify_macos("video_processor エラー", f"文字起こし失敗: {mov_path.name}")
     elif not skip_transcribe and not GEMINI_API_KEY:
         log.warning("GEMINI_API_KEY 未設定のため文字起こしをスキップします")
 
