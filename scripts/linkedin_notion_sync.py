@@ -54,7 +54,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 # スカウトDB の Notion database ID
 # 「https://www.notion.so/{この部分}?v=...」の値（ダッシュなし32文字）
-SCOUT_DB_ID = os.environ.get("SCOUT_DB_ID", "2597d017b6a0808ea499c4ec941d2a96")
+SCOUT_DB_ID = os.environ["SCOUT_DB_ID"]
 
 SESSION_FILE = Path(__file__).parent / "linkedin_session.json"
 STATE_FILE   = Path(__file__).parent / "sync_state.json"
