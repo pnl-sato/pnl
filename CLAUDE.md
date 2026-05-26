@@ -64,6 +64,7 @@ Mobile：080-3930-1714
 - **推薦文・推薦状を作成する場合** → `agents/client-writing.md` の「推薦文」セクションを読む
 - **クライアントへのメール・打ち合わせ文章を作成する場合** → `agents/client-writing.md` の「クライアント連絡」セクションを読む
 - **候補者宛のメール（面談案内・御礼・結果通知・再コンタクトなど）を作成する場合** → `agents/candidate-mail.md` を読む
+- **候補者ごとのプロファイル md を作成・追記・同期する場合** → `agents/candidate-profile.md` を読む（`candidates/` は git 管理外）
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 
