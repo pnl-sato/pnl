@@ -64,7 +64,7 @@ Mobile：080-3930-1714
 - **推薦文・推薦状を作成する場合** → `agents/client-writing.md` の「推薦文」セクションを読む
 - **クライアントへのメール・打ち合わせ文章を作成する場合** → `agents/client-writing.md` の「クライアント連絡」セクションを読む
 - **候補者宛のメール（面談案内・御礼・結果通知・再コンタクトなど）を作成する場合** → `agents/candidate-mail.md` を読む
-- **候補者ごとのプロファイル md を作成・追記・同期する場合** → `agents/candidate-profile.md` を読む（`candidates/` は git 管理外）
+- **候補者ごとのプロファイルを作成・追記・同期する場合** → `agents/candidate-profile.md` を読む（保存先は Craft `work > 10_Recruitment > 13_Candidate｜候補者` フォルダ）
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 
@@ -74,3 +74,16 @@ Mobile：080-3930-1714
 - 推薦文・スカウト文の文字数指定（例：280-300字）は厳守する。
 - 出力は Craft のマークダウン記法に貼り付ける前提でフォーマットする。
 - 候補者の経歴・面談メモが添付されている場合、その内容を踏まえてから書く。情報不足時は何を確認したいか質問する。
+
+## 7. 候補者プロファイルの自動読み込み（重要）
+
+**会話中で候補者の氏名（姓だけでも可）が言及された時点で、ユーザーが明示的に指示しなくても以下を自動実行する：**
+
+1. Craft フォルダ `work > 10_Recruitment > 13_Candidate｜候補者`（folder ID: `05BC363C-0FC2-4B15-AB3D-7C335AA5AB4E`）を `mcp__craft__craft_read` の `search "{姓} {名}"` で検索
+2. 該当ドキュメントが見つかれば、`documents resolve-link` で rootBlockId を取得し、`blocks get --depth 10 --format markdown` で**全文をコンテキストに展開**
+3. 以降の会話は、Craft の md に書かれた留意事項・選考状況・年収条件・面談メモ・LinkedIn 履歴を踏まえて応答する
+4. 該当ドキュメントがなければ `agents/candidate-profile.md` の「初回生成モード」に従い、Notion / SF / Gmail / LinkedIn / Slack を横断調査して新規作成する
+
+**例外：** 候補者名が単なる一般語と区別できない短い言及（例：「小林さんって何人いたっけ」のような検索的な質問）の場合はスキップ可。判断に迷ったら一度ユーザーに確認する。
+
+候補者プロファイルは Craft が**唯一の正本**。git 等への複製は禁止（`candidates/` ディレクトリは旧設計の名残で `.gitignore` 除外済み、使わない）。詳細手順は `agents/candidate-profile.md` 参照。
