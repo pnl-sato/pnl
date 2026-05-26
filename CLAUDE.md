@@ -63,6 +63,7 @@ Mobile：080-3930-1714
 - **スカウト文を作成・修正する場合** → `agents/scout.md` を読む（直近テンプレは Notion スカウト DB `collection://2597d017-b6a0-801b-8185-000ba4b9661e` が正。迷ったら最新の `使用中=YES` を参照）
 - **推薦文・推薦状を作成する場合** → `agents/client-writing.md` の「推薦文」セクションを読む
 - **クライアントへのメール・打ち合わせ文章を作成する場合** → `agents/client-writing.md` の「クライアント連絡」セクションを読む
+- **候補者宛のメール（面談案内・御礼・結果通知・再コンタクトなど）を作成する場合** → `agents/candidate-mail.md` を読む
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 
