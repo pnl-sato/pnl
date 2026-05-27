@@ -34,6 +34,7 @@
 | **Salesforce** | CRM（一部の管理） |
 | **NotebookLM** | 打ち合わせ・面談ログの要約 |
 | **ChatGPT / Gemini** | プロンプト実行（Craft内にプロンプト保管） |
+| **Google Drive** | Claude が直接アクセスできないチャネル（LINE 等）のやりとりログ保管。候補者やりとりは `Work > 07_候補者やりとりのコピー` フォルダ（ID: `1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S`）。ファイル名規約 `[{チャネル}]{氏名}-{年月}｜{保存日}.txt`。候補者プロファイル同期時に自動取込（`agents/candidate-profile.md` セクション3参照） |
 
 Notion の DB 構造詳細は `notion_structure.md` を参照。
 

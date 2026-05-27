@@ -52,9 +52,15 @@
 | **Gmail 個人** (sato-y@pnl.co.jp) | search_threads → 候補者メアド・氏名 | 個人窓口での候補者直接やり取り |
 | **Gmail 共有由来**（個人 Gmail 内 `SY/` ラベル下に転送・自動振り分け済） | search_threads with `label:SY/{ATS or 社コード} "{候補者姓}"` | クライアントとのやり取り内に出てくる候補者情報、ATS 通知（HERP・HRMOS・Talentio 等） |
 | LinkedIn DM | ユーザーが PDF 等で貼り付け | DM 履歴（Claude から直接アクセス不可、ユーザー提供素材を取込む） |
+| **Google Drive 候補者やりとりフォルダ** `1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S`（`Work > 07_候補者やりとりのコピー`） | search_files with `parentId = '1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S' and title contains '{姓}'` → read_file_content | **LINE 履歴（テキストエクスポート）** や、Claude が直接アクセスできないチャネル（LINE / Messenger / 携帯SMS など）のやりとりログ。ファイル名規約は `[{チャネル}]{氏名}-{年月}｜{保存日}.txt` |
 | Slack | slack_search_public_and_private + 候補者氏名 | 推薦・相談時の言及 |
 
 **Gmail 検索の詳細戦略は `agents/client-profile.md` セクション 4.3 参照**（共有 Gmail 由来は `SY/` ラベル下、ATS sender はランダム ID で識別不可なため subject の企業名+候補者名 or label でフィルタ）。
+
+**Google Drive 候補者やりとりフォルダの使い方**：
+- ユーザー（佐藤）が LINE 等のテキストエクスポートを `Work > 07_候補者やりとりのコピー` に随時アップロードする運用
+- 候補者プロファイルの **初回生成 / 同期更新 / 読み込み** 時に毎回このフォルダを `parentId` で検索し、該当候補者のファイルがあれば `read_file_content` で取り込む
+- 取り込んだ内容は Craft md の「LINE 履歴要約」セクション（セクション7.5 として `## 6.5 LINE 履歴要約（新しい順）` または既存の Gmail/LinkedIn 履歴に並列で追加）に要約、原文は「10. 過去のやり取りログ」に Drive リンクと共に保存
 
 ---
 
