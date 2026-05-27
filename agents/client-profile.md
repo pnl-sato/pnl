@@ -62,9 +62,10 @@
 | Notion 面談メモDB `collection://20c7d017-b6a0-8014-82f5-000b750ec0a8` | search / fetch（企業／ポジションリレーション経由） | 採用ヒアリング・面接同席メモ |
 | SF Account | salesforce_search_all + ATS_URL__c フィールド | 会社レコード、**ATS URL**（ドメイン抽出元）、契約状況、Notion Page ID |
 | SF matching__c | salesforce_query_records WHERE ApplyCompany__c = '{社AccountId}' | **過去全推薦履歴**（脱落理由・パターン分析の宝庫） |
-| Slack | slack_search_public_and_private | 社内での議論・推薦相談 |
+| Slack 一般 | slack_search_public_and_private | 社内での議論・推薦相談 |
 | **Gmail 個人** (sato-y@pnl.co.jp) | search_threads | 候補者・クライアント担当者との個人窓口やり取り |
 | **Gmail 共有由来**（個人 Gmail 内 `SY/` ラベル下に転送・自動振り分け済） | search_threads with `label:SY/{コード}` | **クライアントとの公式やり取り・ATS 通知（HERP・HRMOS・Talentio 等）** |
+| **Slack `#ポジションアップデート-sato`** (`C09BTLCBMK7`) | slack_read_channel / slack_search | GAS が共有 Gmail から注力クライアント関連メールを全文転送。クライアント md 同期時のみ参照 |
 
 ---
 
@@ -104,7 +105,8 @@
 - **使用 ATS：** {ATS 名（HERP / HRMOS / Talentio / Greenhouse / Lever / persona-ats / jposting / 直メール 等）}
 - **ATS URL：** SF Account.ATS_URL__c の値
 - **ATS メールドメイン：** {ATS URL から抽出、例：herp.cloud}（Gmail 共有由来フィルタの対象）
-- **Gmail 共有由来ラベル：** `SY/{社コード}` および `SY/ATS-{ATS名}`
+- **Gmail 共有由来ラベル：** `SY/{Notion 社コード}`（注力時のみ、過去6ヶ月をバックフィル）および `SY/ATS-{ATS名}`（常時）
+- **Slack 監視：** `#ポジションアップデート-sato`（注力フラグ ON の間、GAS が自動投稿）
 - 過去の決定（オファー承諾された候補者）
 - 直近の打ち合わせ履歴（リンク + 1行要約）
 
@@ -194,55 +196,80 @@
 
 ---
 
-## 4.3 Gmail 検索戦略（個人 + 共有由来の2系統）
+## 4.3 Gmail / Slack 検索戦略（3経路）
 
-会社の共有 Gmail は別アカウントで Claude から直接見れないため、**個人 Gmail（sato-y@pnl.co.jp）への自動転送＋ラベル振り分け**で同期している。
+会社の共有 Gmail は Claude から直接見られないため、3経路でクライアント関連情報を同期している。
 
-### ラベル設計
+### 経路 A：個人 Gmail（sato-y@pnl.co.jp）— Claude が直接 search
 
-- **個人 Gmail 由来：** プレフィックスなし。例：`GFT`（ギフティ）、`KHS`（カケハシ）
-- **共有 Gmail 由来：** `SY/` 配下にネスト。例：
-  - `SY/GFT` — ギフティ関連の共有メール（クライアントからの公式やり取り、ポジション情報など）
-  - `SY/ATS-HERP` — HERP 系 ATS 通知（複数クライアント横断）
-  - `SY/ATS-HRMOS` — HRMOS 系 ATS 通知
-  - `SY/ATS-Talentio` 等
+- 候補者本人との直接やり取り、佐藤個人窓口でのクライアント担当者とのやり取り
+- ラベルプレフィックスなし
+
+### 経路 B：共有 Gmail → 個人 Gmail へ転送＋ラベリング — Claude が `label:SY/...` で search
+
+| ラベル | 適用タイミング | 用途 |
+|---|---|---|
+| `SY/ATS-{ATS名}` | **常時稼働**（注力に関係なく） | ATS sender ドメインで全社の通知を一律取り込み |
+| `SY/{Notion 社コード}` | **注力開始時のみ作成**＋過去6ヶ月をバックフィル | 注力クライアントの直接やり取り |
+
+- 社コードは Notion クライアントDB の「社コード」列に統一（例：`SY/GFT`、`SY/NDX`）
+- 注力解除時はフィルタを無効化（ラベル付き履歴は保持して過去スポット検索で使う）
+
+### 経路 C：Slack `#ポジションアップデート-sato`（Channel ID: `C09BTLCBMK7`）— 継続監視
+
+- GAS が共有 Gmail を5分おきにポーリングし、注力クライアント関連のメール全文（件名・送信者・本文・Gmail 直リンク）を Slack に投稿
+- 注力クライアントの新着情報はここに**ほぼリアルタイム**に流れる
+- Claude が読むのは **クライアント md 同期時のみ**（自動読み込みでは触れない）
+- 候補者プロファイル時は不要（経路 A + B で完結）
 
 ### 共有 Gmail 側のフィルタ Recipe
 
-クライアントごと（注力クライアントのみ）：
-```
-Has the words: "{社名}" OR "{英語社名}"
-→ 転送: sato-y@pnl.co.jp
-→ ラベル: SY/{社コード}
-```
-※ Gmail の「Has the words」は subject + body + snippet を検索
-
-ATS 共通フォールバック（全クライアント横断、7 ATS 系統を一括）：
+ATS 共通（常時稼働、注力に関係なく適用）：
 ```
 from:(*@herp.cloud) OR from:(*@hrmos.co) OR from:(*@talentio.com)
   OR from:(*@greenhouse.io) OR from:(*@lever.co)
   OR from:(*@persona-ats.com) OR from:(*@jposting.net)
 → 転送: sato-y@pnl.co.jp
-→ ラベル: SY/ATS（または ATS 種別ごとに分割可）
+→ ラベル: SY/ATS-{ATS名}（HERP / HRMOS / Talentio 等で分割）
 ```
 
-### 検索順序（マッチング評価・候補者プロファイル生成時）
+注力クライアント開始時（1回限り・社ごと）：
+```
+Has the words: "{社名}" OR "{英語社名}"
+→ 転送: sato-y@pnl.co.jp
+→ ラベル: SY/{Notion 社コード}
+→ 「既存のメッセージにも適用」をチェック（直近6ヶ月程度が一括バックフィル）
+```
 
-1. **個人 Gmail（直接やり取り）：** `search_threads` with `{候補者メアド}` or `{候補者氏名}`
-2. **共有 Gmail 由来（クライアント文脈）：** `search_threads` with `label:SY/{社コード} "{候補者姓}"`
-3. **共有 Gmail 由来（ATS 通知）：** `search_threads` with `label:SY/ATS "{候補者姓}" "{社名}"` （ATS 通知は subject/body に **{ATS_ID}@{ATSドメイン}** 形式の sender で来る、候補者氏名は subject に含まれる前提）
+### 検索順序
+
+**クライアント md 同期 / 初回生成時：**
+1. `slack_read_channel C09BTLCBMK7`（または `slack_search "{社名}"`、`oldest` で前回 sync 以降に絞る）→ 直近の新着・コンテキスト
+2. `search_threads` with `label:SY/{社コード}` → バックフィル含む過去履歴
+3. `search_threads` with `label:SY/ATS-* "{社名}"` → 横断 ATS 通知
+
+**候補者 md 同期 / 初回生成時：**
+1. `search_threads` with `{候補者メアド}` or `{候補者氏名}` → 個人 Gmail の直接やり取り
+2. `search_threads` with `label:SY/{該当クライアント社コード} "{候補者姓}"` → 注力クライアントとの選考スレッド
+3. `search_threads` with `label:SY/ATS-* "{候補者姓}"` → ATS 通知
+
+**マッチング評価時：**
+- 候補者 md / クライアント md / ポジション md を fetch（md に上記情報は集約済みの前提）
+- Slack `#ポジションアップデート-sato` は直接読まず、クライアント md に記録済みの内容を参照
 
 ### 重要：sender アドレスベースでの候補者識別はしない
 
 ATS 通知の sender は `{ランダム候補者ID}@{ATSドメイン}` 形式で、毎回違うため。**識別は subject（企業名 + 候補者名）または body 内容**で行う。
 
-### クライアント名・候補者名の判別パターン（共有 Gmail）
+### クライアント名・候補者名の判別パターン
 
 | 種別 | 判別 | 検索クエリ例 |
 |---|---|---|
-| 候補者メール | subject に企業名 + 候補者名 | `label:SY/GFT "八木 俊輔"` |
+| 候補者メール（個人窓口） | 個人 Gmail | `from:{候補者メアド}` |
+| 候補者メール（共有経由） | `SY/{社コード}` ラベル下 subject | `label:SY/GFT "八木 俊輔"` |
 | ポジション開閉（subject 型） | subject に企業名 | `label:SY/GFT (closed OR open OR クローズ OR オープン)` |
-| ポジション開閉（body 型） | 本文に企業名 | `label:SY/ATS "ギフティ"` |
+| ポジション開閉（body 型） | 本文に企業名 | `label:SY/ATS-HERP "ギフティ"` |
+| 注力クライアントの直近全件 | Slack | `slack_read_channel C09BTLCBMK7` |
 
 ---
 
@@ -292,11 +319,13 @@ ATS 通知の sender は `{ランダム候補者ID}@{ATSドメイン}` 形式で
 
 **Slack `#new_job3_new`** は Claude が直接読む対象ではない（人間向けの informational push、中身は SF Opportunity への link 集約）。
 
-**Email 共有由来（`SY/` ラベル下）** は **context enrichment** ソース：
+**Email 共有由来（`SY/` ラベル下）** および **Slack `#ポジションアップデート-sato`（GAS が共有 Gmail を流す）** は **context enrichment** ソース：
 - 新ポジション発見には使わない（すべて SF に集約される）
 - 過去のクライアントとのやり取り（判断理由・カルチャー上の懸念・年収交渉履歴）
 - ATS 通知の詳細補足（推薦結果・選考フィードバック・面接調整）
 - → 評価軸「過去パターン」「カルチャー」の根拠となる文脈情報
+
+なお Slack `#ポジションアップデート-sato` はクライアント md 同期時にだけ読み込んで md に書き写しておく。マッチング評価時は md 経由で参照し、Slack を毎回叩きにいかない。
 
 ### 候補者起点（`/match {候補者姓}` または自然言語）
 

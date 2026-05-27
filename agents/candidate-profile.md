@@ -50,11 +50,13 @@
 | Notion スカウトDB `collection://2597d017-b6a0-801b-8185-000ba4b9661e` | search / fetch | 送信したスカウト・返信状況 |
 | Salesforce | salesforce_search_all + salesforce_query_records | Contact（候補者）・matching__c（パイプライン）・Account（クライアント、ATS URL含む） |
 | **Gmail 個人** (sato-y@pnl.co.jp) | search_threads → 候補者メアド・氏名 | 個人窓口での候補者直接やり取り |
-| **Gmail 共有由来**（個人 Gmail 内 `SY/` ラベル下に転送・自動振り分け済） | search_threads with `label:SY/{ATS or 社コード} "{候補者姓}"` | クライアントとのやり取り内に出てくる候補者情報、ATS 通知（HERP・HRMOS・Talentio 等） |
+| **Gmail 共有由来**（個人 Gmail 内 `SY/` ラベル下に転送・自動振り分け済） | search_threads with `label:SY/{Notion 社コード or ATS-{ATS名}} "{候補者姓}"` | クライアントとのやり取り内に出てくる候補者情報、ATS 通知（HERP・HRMOS・Talentio 等） |
 | LinkedIn DM | ユーザーが PDF 等で貼り付け | DM 履歴（Claude から直接アクセス不可、ユーザー提供素材を取込む） |
-| Slack | slack_search_public_and_private + 候補者氏名 | 推薦・相談時の言及 |
+| Slack 一般 | slack_search_public_and_private + 候補者氏名 | 推薦・相談時の言及 |
 
-**Gmail 検索の詳細戦略は `agents/client-profile.md` セクション 4.3 参照**（共有 Gmail 由来は `SY/` ラベル下、ATS sender はランダム ID で識別不可なため subject の企業名+候補者名 or label でフィルタ）。
+**Gmail 検索の詳細戦略は `agents/client-profile.md` セクション 4.3 参照**（`SY/ATS-*` は常時稼働、`SY/{Notion 社コード}` は注力開始時のみ作成＋過去6ヶ月バックフィル、ATS sender はランダム ID で識別不可なため subject の企業名+候補者名 or label でフィルタ）。
+
+**Slack `#ポジションアップデート-sato` は候補者プロファイル時には読まない**（注力クライアント md 同期時に既に拾われている前提）。
 
 ---
 
