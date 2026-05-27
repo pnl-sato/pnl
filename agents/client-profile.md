@@ -60,10 +60,11 @@
 | Notion ポジションDB `collection://1fb7d017-b6a0-8052-a7c9-000b1aa76cda` | search / fetch | JD・要件・報酬レンジ・注力フラグ・契約形態・料率 |
 | Notion パイプラインDB `collection://20f7d017-b6a0-807c-a60f-000b827c6841` | search / fetch（ポジション経由） | 進行中候補者・選考ステータス |
 | Notion 面談メモDB `collection://20c7d017-b6a0-8014-82f5-000b750ec0a8` | search / fetch（企業／ポジションリレーション経由） | 採用ヒアリング・面接同席メモ |
-| SF Account | salesforce_search_all | 会社レコード・Description（外部資料リンク） |
+| SF Account | salesforce_search_all + ATS_URL__c フィールド | 会社レコード、**ATS URL**（ドメイン抽出元）、契約状況、Notion Page ID |
 | SF matching__c | salesforce_query_records WHERE ApplyCompany__c = '{社AccountId}' | **過去全推薦履歴**（脱落理由・パターン分析の宝庫） |
 | Slack | slack_search_public_and_private | 社内での議論・推薦相談 |
-| Gmail | search_threads | クライアント担当者とのメール |
+| **Gmail 個人** (sato-y@pnl.co.jp) | search_threads | 候補者・クライアント担当者との個人窓口やり取り |
+| **Gmail 共有由来**（個人 Gmail 内 `SY/` ラベル下に転送・自動振り分け済） | search_threads with `label:SY/{コード}` | **クライアントとの公式やり取り・ATS 通知（HERP・HRMOS・Talentio 等）** |
 
 ---
 
@@ -100,6 +101,10 @@
 ## 3. P&L との関係性
 - 関わり度合い（高/中/低）
 - 契約形態（通常Fee/UpFee/リテイナー）・料率
+- **使用 ATS：** {ATS 名（HERP / HRMOS / Talentio / Greenhouse / Lever / persona-ats / jposting / 直メール 等）}
+- **ATS URL：** SF Account.ATS_URL__c の値
+- **ATS メールドメイン：** {ATS URL から抽出、例：herp.cloud}（Gmail 共有由来フィルタの対象）
+- **Gmail 共有由来ラベル：** `SY/{社コード}` および `SY/ATS-{ATS名}`
 - 過去の決定（オファー承諾された候補者）
 - 直近の打ち合わせ履歴（リンク + 1行要約）
 
@@ -186,6 +191,58 @@
 ## 8. ToDo
 - [ ] ...
 ```
+
+---
+
+## 4.3 Gmail 検索戦略（個人 + 共有由来の2系統）
+
+会社の共有 Gmail は別アカウントで Claude から直接見れないため、**個人 Gmail（sato-y@pnl.co.jp）への自動転送＋ラベル振り分け**で同期している。
+
+### ラベル設計
+
+- **個人 Gmail 由来：** プレフィックスなし。例：`GFT`（ギフティ）、`KHS`（カケハシ）
+- **共有 Gmail 由来：** `SY/` 配下にネスト。例：
+  - `SY/GFT` — ギフティ関連の共有メール（クライアントからの公式やり取り、ポジション情報など）
+  - `SY/ATS-HERP` — HERP 系 ATS 通知（複数クライアント横断）
+  - `SY/ATS-HRMOS` — HRMOS 系 ATS 通知
+  - `SY/ATS-Talentio` 等
+
+### 共有 Gmail 側のフィルタ Recipe
+
+クライアントごと（注力クライアントのみ）：
+```
+Has the words: "{社名}" OR "{英語社名}"
+→ 転送: sato-y@pnl.co.jp
+→ ラベル: SY/{社コード}
+```
+※ Gmail の「Has the words」は subject + body + snippet を検索
+
+ATS 共通フォールバック（全クライアント横断、7 ATS 系統を一括）：
+```
+from:(*@herp.cloud) OR from:(*@hrmos.co) OR from:(*@talentio.com)
+  OR from:(*@greenhouse.io) OR from:(*@lever.co)
+  OR from:(*@persona-ats.com) OR from:(*@jposting.net)
+→ 転送: sato-y@pnl.co.jp
+→ ラベル: SY/ATS（または ATS 種別ごとに分割可）
+```
+
+### 検索順序（マッチング評価・候補者プロファイル生成時）
+
+1. **個人 Gmail（直接やり取り）：** `search_threads` with `{候補者メアド}` or `{候補者氏名}`
+2. **共有 Gmail 由来（クライアント文脈）：** `search_threads` with `label:SY/{社コード} "{候補者姓}"`
+3. **共有 Gmail 由来（ATS 通知）：** `search_threads` with `label:SY/ATS "{候補者姓}" "{社名}"` （ATS 通知は subject/body に **{ATS_ID}@{ATSドメイン}** 形式の sender で来る、候補者氏名は subject に含まれる前提）
+
+### 重要：sender アドレスベースでの候補者識別はしない
+
+ATS 通知の sender は `{ランダム候補者ID}@{ATSドメイン}` 形式で、毎回違うため。**識別は subject（企業名 + 候補者名）または body 内容**で行う。
+
+### クライアント名・候補者名の判別パターン（共有 Gmail）
+
+| 種別 | 判別 | 検索クエリ例 |
+|---|---|---|
+| 候補者メール | subject に企業名 + 候補者名 | `label:SY/GFT "八木 俊輔"` |
+| ポジション開閉（subject 型） | subject に企業名 | `label:SY/GFT (closed OR open OR クローズ OR オープン)` |
+| ポジション開閉（body 型） | 本文に企業名 | `label:SY/ATS "ギフティ"` |
 
 ---
 
