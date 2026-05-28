@@ -153,7 +153,8 @@ ToDo・タスクは **Notion ToDo DB**（`collection://2257d017-b6a0-8026-867c-0
   - `[佐藤]` — 佐藤本人が実行するタスク（送信・面談・電話・クライアント連絡等）
 - **relation で文脈を紐付ける：** `クライアント` / `ポジション` / `候補者` / `スカウト文` のうち該当するものを必ず付ける
 - **ステータス：** `未着手` / `進行中` / `完了`
-- **TaskType：** `Inbox 📨` / `NextAction 🚀` / `Waiting ⏳` / `Project 🗂️` / `Someday 💭`
+- **TaskType：** 新規 ToDo は原則 **`Inbox 📨`** で作成する。`NextAction 🚀` / `Waiting ⏳` / `Project 🗂️` / `Someday 💭` への振り分けは、後でユーザー or Claude が triage して行う（GTD ワークフロー）
+  - 例外：明らかに分類できる場合（既に完了・進行中で履歴複写するケース、ユーザーから明示指定があるケースなど）は最初から該当 TaskType を付けて良い
 - **Category：** 原則 `Pole&Line`
 - スカウト関連のタスクは `スカウトToDo` を `__YES__`、`スカウト文` relation も付与
 
@@ -161,7 +162,8 @@ ToDo・タスクは **Notion ToDo DB**（`collection://2257d017-b6a0-8026-867c-0
 
 - Craft md テンプレに ToDo セクションを書かない（`agents/client-profile.md` / `agents/candidate-profile.md` のテンプレからも除去済）
 - 「○○ の ToDo は？」と聞かれたら Notion ToDo DB を `mcp__notion-search` または `mcp__notion-fetch` で query（relation で絞り込み）
-- 新規 ToDo を起こす際は `mcp__notion-create-pages` で ToDo DB に追加し、結果を口頭で報告
+- 新規 ToDo を起こす際は `mcp__notion-create-pages` で ToDo DB に **`Inbox 📨`** として追加し、結果を口頭で報告
+- 「Inbox を振り分けて」と依頼されたら、`TaskType = "Inbox 📨"` の ToDo を query → 内容を読み取り、推奨 TaskType を提案 → ユーザー確認後 or 自走で `notion-update-page` で更新
 
 **例外：**
 
