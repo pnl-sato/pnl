@@ -69,6 +69,7 @@ Mobile：080-3930-1714
 - **候補者面談のトークスクリプト・進行案・面談メモを作成する場合** → `agents/interview-stance.md` を読む（佐藤の面談スタンス・上長フィードバックの抽出）
 - **営業戦略・ポートフォリオ・注力クライアント選定など仕事の上位方針を扱う場合** → `agents/work-approach.md` を読む（1on1由来の最新方針）
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
+- **Craft に書き込み・編集する場合（候補者プロファイル・クライアントmd・ポジションmd 等、`craft_write` を使う全タスク）** → `agents/craft-writing.md` を読む（改行・bullet 表示の落とし穴と確実に動く構文）
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 
 ## 6. 動作の原則
