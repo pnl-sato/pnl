@@ -66,6 +66,52 @@ blocks add --id <rootBlockId> --markdown "## 1. ポジション要件" --positio
 - ただしこれは「1ブロックの中に2行のテキスト」になるだけで、bullet として2itemにはならない
 - 確実に bullet 2item にしたいなら 3-1 の方式（個別 add）が安全
 
+### 3-2b. ★効率化パターン：実改行 `\n\n` をブロック区切りとして使う（2026-05-28 検証）
+
+セクション単位（見出し＋複数 bullet）を**1回の `blocks add` で確実に分割投下できる**ことが scout-kit 生成時に判明。アンチパターン集の symptom A／B を回避しつつ呼び出し回数を 1/5〜1/10 に削減できる。
+
+**書き方：**
+
+```
+blocks add --id <pageId> --markdown "## セクション見出し
+
+- bullet 1（**強調**OK）
+
+- bullet 2
+
+- bullet 3" --position end
+```
+
+- 各ブロックの間に**実改行を2つ**（空行1行）入れる
+- bullet には行頭 `- ` を付ける（個別 add 時と同じ書式）
+- 結果：見出し1ブロック＋bullet 3ブロックの計4ブロックが `listStyle: bullet` 付きで生成される
+
+**動作確認済みのケース：**
+
+| 構成 | 結果 |
+|---|---|
+| 見出し（##／###）＋bullet 群 | ✓ 見出しと各 bullet が個別ブロック化、bullet スタイル維持 |
+| bullet のみ（`- a\n\n- b\n\n- c`） | ✓ 3つの独立 bullet ブロック |
+| numbered list（`1. a\n\n2. b`） | ✓ `listStyle: numbered` で個別ブロック |
+| bullet 内の `**強調**` | ✓ 太字 attribute 付与される |
+| 段落（地の文）の連続 | ✓ 各段落が独立ブロック |
+
+**craft_write の挙動メモ：**
+
+JSON 経由の場合 `"\n"` は実改行（0x0A）にデコードされ、Craft CLI は「実改行2つ = ブロック区切り」として処理する（tool 説明の「real NL=soft breaks」だけ読むと soft break になりそうだが、`\n\n`（空行）はブロック区切りに昇格する）。`- ` プレフィックスもブロックごとに評価され、bullet スタイルが正しく付与される。
+
+**それでも個別 add が安全な場面：**
+
+- 同じセクション内で**段落 → bullet → 段落 → bullet** と頻繁に切り替わる場合（順序を厳密に保ちたい）
+- `<callout>` や `+ Toggle title` など特殊記法を混在させる場合
+- 1セクションのブロック数が 15 個を超える場合（一度にエラーが起きた時の復旧コストが上がる）
+
+**運用ルール：**
+
+- 標準は「**1セクション（見出し＋関連 bullet 群）＝1回の `blocks add`**」
+- 数行で済む短い構造は引き続き個別 add でも良い
+- 書き込み後の `blocks get` 確認は必須（3-4 の手順は変わらず）
+
 ### 3-3. テーブル・コードブロックは1ブロックで送って良い
 
 テーブル記法は元々1ブロックなので、`\n` 区切りで送って問題なし。
@@ -87,9 +133,9 @@ blocks get <rootBlockId> --depth 5 --format markdown
 
 | やったこと | 結果 | 対処 |
 |---|---|---|
-| `blocks add --markdown "- a\n- b\n- c"`（1回で全bullet送信） | 1ブロックに `- a\n- b\n- c` がリテラル保存 | 各itemを個別 `blocks add` |
-| `blocks update --markdown "item1\n\nitem2"`（実改行2つ） | 最初のブロックだけ bullet、残りはプレーン段落 | 各itemに `- ` を付けて個別add |
-| 長文markdown を1回の `blocks add` で送信 | 半分以上のブロックで改行リテラル化 | セクション単位で分割 |
+| `blocks add --markdown "- a\n- b\n- c"`（1回で全bullet送信、実改行1つ区切り） | 1ブロックに `- a` のみ、残りは soft break として失われる or リテラル化 | bullet ごとに**空行1行**（実改行2つ）で区切る → 3-2b 参照 |
+| `blocks update --markdown "item1\n\nitem2"`（実改行2つだが `- ` 無し） | 最初のブロックだけ bullet、残りはプレーン段落 | 各itemに `- ` を付ける（3-2b） |
+| 長文markdown を区切り無しで1回送信 | 全部 soft break で1ブロックに圧縮 | `\n\n`（空行）でブロック区切り、3-2b の構成で送る |
 | 書き込み後の確認をスキップ | 後で読みづらいと判明、再修正に時間 | 必ず `blocks get` で表示確認 |
 
 ---
