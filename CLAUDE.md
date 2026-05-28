@@ -142,7 +142,33 @@ Mobile：080-3930-1714
 
 **例外：** 「1on1って何時から？」のような単なる日程確認はスキップ可。判断に迷ったら一度ユーザーに確認する。
 
-## 10. セッション横断の記録は main に集約する
+## 10. ToDo は Notion ToDo DB で一元管理（重要）
+
+ToDo・タスクは **Notion ToDo DB**（`collection://2257d017-b6a0-8026-867c-000bb0969507`）に一元化する。Craft md（クライアント／ポジション／候補者プロファイル等）には独自の ToDo セクションを作らない。
+
+**運用ルール：**
+
+- **Title プレフィックスで担当を表す：**
+  - `[Claude]` — Claude が手を動かして完結できるタスク（文面作成・md 更新・リサーチ等）
+  - `[佐藤]` — 佐藤本人が実行するタスク（送信・面談・電話・クライアント連絡等）
+- **relation で文脈を紐付ける：** `クライアント` / `ポジション` / `候補者` / `スカウト文` のうち該当するものを必ず付ける
+- **ステータス：** `未着手` / `進行中` / `完了`
+- **TaskType：** `Inbox 📨` / `NextAction 🚀` / `Waiting ⏳` / `Project 🗂️` / `Someday 💭`
+- **Category：** 原則 `Pole&Line`
+- スカウト関連のタスクは `スカウトToDo` を `__YES__`、`スカウト文` relation も付与
+
+**Claude の振る舞い：**
+
+- Craft md テンプレに ToDo セクションを書かない（`agents/client-profile.md` / `agents/candidate-profile.md` のテンプレからも除去済）
+- 「○○ の ToDo は？」と聞かれたら Notion ToDo DB を `mcp__notion-search` または `mcp__notion-fetch` で query（relation で絞り込み）
+- 新規 ToDo を起こす際は `mcp__notion-create-pages` で ToDo DB に追加し、結果を口頭で報告
+
+**例外：**
+
+- 単一セッションで完結する作業計画（「次にこれを進めます」レベル）は ToDo 化せず会話内で完結させて良い
+- セッションをまたぐ可能性のあるアクションは必ず ToDo DB に起こす
+
+## 11. セッション横断の記録は main に集約する
 
 このリポジトリの `CLAUDE.md` および `agents/*.md`、`notion_structure.md` 等は、**全てのセッションで自動読み込みされる共通ベース設定**である。新規セッションは `main` を起点に Claude が立ち上がるため、main に反映されていない変更は他セッションから参照できない。
 
