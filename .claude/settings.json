@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__craft__craft_write",
+      "mcp__6571ddd2-b344-4cae-8e9e-ade3ad2290b9__craft_write"
+    ]
+  }
+}
