@@ -67,6 +67,7 @@ Mobile：080-3930-1714
 - **候補者ごとのプロファイルを作成・追記・同期する場合** → `agents/candidate-profile.md` を読む（保存先は Craft `work > 10_Recruitment > 13_Candidate｜候補者` フォルダ）
 - **クライアント／ポジションプロファイル・マッチング評価を作成・利用する場合** → `agents/client-profile.md` を読む（保存先は Craft `work > 10_Recruitment > 12_Client｜企業` フォルダ）
 - **候補者面談のトークスクリプト・進行案・面談メモを作成する場合** → `agents/interview-stance.md` を読む（佐藤の面談スタンス・上長フィードバックの抽出）
+- **営業戦略・ポートフォリオ・注力クライアント選定など仕事の上位方針を扱う場合** → `agents/work-approach.md` を読む（1on1由来の最新方針）
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 
@@ -119,7 +120,9 @@ Mobile：080-3930-1714
 
 1. Notion 1on1 DB（`collection://22c7d017-b6a0-8033-837e-000bd6c2ae8b`）を `mcp__notion-search` で日付降順に検索（または `mcp__notion-fetch` でDBを開いてビュー経由でリスト化）
 2. 直近3件の 1on1 ページを `mcp__notion-fetch` で取得し、**議事録セクション**（`## 議事録` 配下）を中心にコンテキストに展開
-3. 候補者面談のトークスクリプト・進行案・面談メモを作成するタスクであれば、`agents/interview-stance.md` を**併せて読み込む**
+3. 議事録セクションが空欄の回（最新回など）は、**Notion 文字起こし DB**（`collection://3647d017-b6a0-80d7-b611-000ba74d7267`）からタイトル `1on1-YYYY-MM-DD` で対応する文字起こしを fetch する。文字起こしは生データのため要約しながら読む
+4. 候補者面談のトークスクリプト・進行案・面談メモを作成するタスクであれば、`agents/interview-stance.md` を**併せて読み込む**
+5. 営業戦略・注力クライアント・ポートフォリオの上位方針が関わるタスクであれば、`agents/work-approach.md` を**併せて読み込む**
 
 **面談トークスクリプト・進行案作成時の必須参照：**
 - `agents/interview-stance.md`（佐藤の面談スタンス・上長フィードバック抽出）
