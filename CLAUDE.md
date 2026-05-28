@@ -98,7 +98,7 @@ Mobile：080-3930-1714
 1. Craft フォルダ `work > 10_Recruitment > 12_Client｜企業`（folder ID: `F41A3C28-9B9B-47C7-BAC1-0D8431AF73A9`）配下の **`{社名}/{社名}.md`** および **`{社名}/positions/{ポジション名}.md`** を `mcp__craft__craft_read` の `search` で検索
 2. 該当ドキュメントが見つかれば、`documents resolve-link` で rootBlockId を取得し、`blocks get --depth 10 --format markdown` で**全文をコンテキストに展開**
 3. 以降の会話は、Craft md に書かれた**留意事項・推薦傾向（マッチング学習資産）・経営陣スタンス・過去推薦履歴のパターン**を踏まえて応答する
-4. 該当ドキュメントがなければ `agents/client-profile.md` の「初回生成モード」に従い、Notion / SF / 打ち合わせメモから新規作成する
+4. 該当ドキュメントがなければ `agents/client-profile.md` の「初回生成モード」に従い、Notion / SF / 打ち合わせメモ / **Google Drive `01_企業情報/{社名} #{社コード}/` 配下のファイル**（folder ID: `1LP3St--FiVzlpQxJlqD3bjOj1ju5Z4Gx`、命名・検索手順は `agents/client-profile.md` セクション4.4 参照）から新規作成する
 
 **マッチング評価（「{候補者}さんに合う案件は？」「{ポジション}に合う候補者は？」）が依頼された場合：**
 

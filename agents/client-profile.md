@@ -45,7 +45,7 @@
 | モード | 判定条件 | 振る舞い |
 |---|---|---|
 | **読み込み** | 会話中でクライアント名／ポジション名が言及された | Craft フォルダを search → 該当ドキュメントを `blocks get --format markdown` で全文取得 |
-| **初回生成** | search で該当ドキュメントが見つからない | Notion + SF + 打ち合わせメモ + 過去推薦履歴から横断収集して Craft に新規作成 |
+| **初回生成** | search で該当ドキュメントが見つからない | Notion + SF + 打ち合わせメモ + 過去推薦履歴 + **Google Drive `01_企業情報/{社名} #{社コード}/` 配下の関連ファイル**（セクション 4.4 参照）から横断収集して Craft に新規作成 |
 | **対話追記** | ユーザーが素材（打ち合わせメモ・採用要件メモ等）を貼り付け | 該当セクションに `blocks add` で要約追記 |
 | **同期更新** | 「最新に同期」「ステータス反映」等の指示 | Notion・SF を再取得して該当セクションを更新 |
 | **マッチング評価** | `/match` 系コマンド or「合いそうな案件は？」 | 候補者 md ＋ 全注力ポジション md を読み比較・スコア付け |
@@ -65,6 +65,7 @@
 | Slack | slack_search_public_and_private | 社内での議論・推薦相談 |
 | **Gmail 個人** (sato-y@pnl.co.jp) | search_threads | 候補者・クライアント担当者との個人窓口やり取り |
 | **Gmail 共有由来**（個人 Gmail 内 `SY/` ラベル下に転送・自動振り分け済） | search_threads with `label:SY/{コード}` | **クライアントとの公式やり取り・ATS 通知（HERP・HRMOS・Talentio 等）** |
+| **Google Drive 企業情報フォルダ** `01_企業情報`（folder ID: `1LP3St--FiVzlpQxJlqD3bjOj1ju5Z4Gx`） | search_files（後述） | **採用要件メモ・JD 原本・打ち合わせ資料・ピッチ資料など、ローカル保管の重要原本** |
 
 ---
 
@@ -76,9 +77,10 @@
 （タイトル＝ドキュメント名そのもの。例: ギフティ）
 
 > Last synced: YYYY-MM-DD HH:MM (JST)
-> Sources: Notion ✓ / Salesforce ✓ / 面談メモ ✓ / 過去推薦履歴 ✓
+> Sources: Notion ✓ / Salesforce ✓ / 面談メモ ✓ / 過去推薦履歴 ✓ / Google Drive ✓
 > Notion: [企業ページ](https://...)
 > Salesforce: [Account](https://...)
+> Google Drive: [{社名} #{社コード}](https://drive.google.com/drive/folders/...)
 > 関連リンク: [会社紹介資料](...) / [ATS](...) / [テックブログ](...)
 
 ---
@@ -246,6 +248,43 @@ ATS 通知の sender は `{ランダム候補者ID}@{ATSドメイン}` 形式で
 
 ---
 
+## 4.4 Google Drive 検索戦略（企業情報フォルダ）
+
+クライアントごとの採用要件メモ・JD 原本・打ち合わせ資料・ピッチ資料などは、Google Drive の **`01_企業情報` フォルダ**（folder ID: `1LP3St--FiVzlpQxJlqD3bjOj1ju5Z4Gx`）配下に、社ごとのサブフォルダで集約されている。
+
+### フォルダ命名規約
+
+サブフォルダ名は **`{社名} #{社コード}`** 形式。社コードは Gmail `SY/` ラベルと同じもの。
+
+例：
+- `ギフティ #GFT`
+- `MIXI #MXI`
+- `BuySell Technologies #BST`
+- `テイラー #TYL`
+
+（社コード未付与の旧フォルダ：`DMM`, `テイラー`（重複）など。コード入りの方を正本扱いとする）
+
+### クライアント md 作成・更新時のフロー
+
+1. **社フォルダを特定**：`search_files` で `parentId = '1LP3St--FiVzlpQxJlqD3bjOj1ju5Z4Gx' and mimeType = 'application/vnd.google-apps.folder' and title contains '#{社コード}'` を実行
+   - ヒットしなければコードなしの社名一致（`title contains '{社名}'`）でフォールバック
+2. **配下のファイル一覧を取得**：見つかった社フォルダの ID を `parentId` に指定し `search_files`（`modifiedTime` 降順で目視判定）
+3. **関連ファイルを選定**：タイトル・更新日・mimeType から、採用要件メモ・JD・打ち合わせ議事録・ピッチ資料など、クライアント md の根拠になり得るものを Claude が選ぶ
+4. **本文取得**：`read_file_content` で内容を展開。Google Docs / Sheets / Slides も対応
+5. **クライアント md に反映**：
+   - 採用要件メモ → 該当ポジション md の「ポジション要件」「JD 抜粋」
+   - 打ち合わせ議事録 → クライアント md の「打ち合わせメモ要約」「P&L 経由の推薦傾向」
+   - ピッチ資料 → クライアント md の「会社概要」「経営陣・キーパーソン」
+6. **クライアント md の Sources 行に Drive 参照を追加**：`Google Drive ✓` と社フォルダの viewUrl を載せる
+
+### 注意
+
+- サブフォルダ配下にさらに階層がある場合、必要に応じて再帰的に list する（ただし関連性の低い深い階層は読まない）
+- Drive のファイルは更新日が新しいものを優先（同名の古いバージョンが残っていることがある）
+- 添付の Word/Excel/PDF も `read_file_content` で読めるが、大容量は metadata だけ確認して必要部分だけ読む
+
+---
+
 ## 5. 同期戦略（重要）
 
 候補者数・ポジション数の規模を考慮し、**コスト×スピードのバランス**で2層運用：
@@ -343,6 +382,7 @@ ATS 通知の sender は `{ランダム候補者ID}@{ATSドメイン}` 形式で
 - [ ] Craft フォルダ `12_Client｜企業/{社名}/` 配下に作成されている
 - [ ] クライアント md とポジション md（注力 YES のみ）が揃っている
 - [ ] 最上部の Last synced / Sources / Notion・SF URL が埋まっている
+- [ ] Google Drive `01_企業情報/{社名} #{社コード}/` 配下を確認し、関連ファイルを反映した（該当フォルダがあれば Sources に `Google Drive ✓`）
 - [ ] 「P&L 経由の推薦傾向」セクションに過去履歴の抽象化された学びが入っている
 - [ ] 個人情報を `clients/` ローカルや git に書き出していない
 
