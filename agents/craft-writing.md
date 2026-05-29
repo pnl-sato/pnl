@@ -103,8 +103,14 @@ JSON 経由の場合 `"\n"` は実改行（0x0A）にデコードされ、Craft 
 **それでも個別 add が安全な場面：**
 
 - 同じセクション内で**段落 → bullet → 段落 → bullet** と頻繁に切り替わる場合（順序を厳密に保ちたい）
-- `<callout>` や `+ Toggle title` など特殊記法を混在させる場合
+- `<callout>` を含める場合（**callout は単独 add 必須**。本文と混在すると `Unexpected HTML token` エラー）
+- `+ Toggle title` など特殊記法を混在させる場合
 - 1セクションのブロック数が 15 個を超える場合（一度にエラーが起きた時の復旧コストが上がる）
+
+**並列実行の注意：**
+
+- **同一ドキュメント**への複数 `blocks add` は順序保証なし → 逐次実行する
+- **別ドキュメント**間は並列実行OK（複数ドキュメントへの本文投入を並列化して時短可能。scout-kit 複製で 3 ドキュメント並列投入を実用化）
 
 **運用ルール：**
 
@@ -136,6 +142,8 @@ blocks get <rootBlockId> --depth 5 --format markdown
 | `blocks add --markdown "- a\n- b\n- c"`（1回で全bullet送信、実改行1つ区切り） | 1ブロックに `- a` のみ、残りは soft break として失われる or リテラル化 | bullet ごとに**空行1行**（実改行2つ）で区切る → 3-2b 参照 |
 | `blocks update --markdown "item1\n\nitem2"`（実改行2つだが `- ` 無し） | 最初のブロックだけ bullet、残りはプレーン段落 | 各itemに `- ` を付ける（3-2b） |
 | 長文markdown を区切り無しで1回送信 | 全部 soft break で1ブロックに圧縮 | `\n\n`（空行）でブロック区切り、3-2b の構成で送る |
+| `<callout>x</callout>\n\n## 見出し\n\n本文`（callout を本文と混在） | `Unexpected HTML token at this position` で全体エラー | **callout は単独で `blocks add`**、本文は別コール（2026-05-28 scout-kit 複製で確認） |
+| `blocks add --markdown $'- a\n- b'`（bash の `$'...'` 構文を使用） | `$` がリテラル化、`\n` も literal `\n` として保存 | **`$'...'` は使えない**（MCPは bash 経由でない）。`--markdown "..."` の値に直接実改行を含める（3-2b 参照） |
 | 書き込み後の確認をスキップ | 後で読みづらいと判明、再修正に時間 | 必ず `blocks get` で表示確認 |
 
 ---
