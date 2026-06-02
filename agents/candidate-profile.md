@@ -51,7 +51,7 @@
 | Salesforce | salesforce_search_all + salesforce_query_records | Contact（候補者）・matching__c（パイプライン）・Account（クライアント、ATS URL含む） |
 | **Gmail 個人** (sato-y@pnl.co.jp) | search_threads → 候補者メアド・氏名 | 個人窓口での候補者直接やり取り |
 | **Gmail 共有由来**（個人 Gmail 内 `SY/` ラベル下に転送・自動振り分け済） | search_threads with `label:SY/{ATS or 社コード} "{候補者姓}"` | クライアントとのやり取り内に出てくる候補者情報、ATS 通知（HERP・HRMOS・Talentio 等） |
-| **Google Drive 候補者やりとり**（`Work > 07_候補者やりとりのコピー`、folder ID `1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S`） | search_files `parentId = '1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S'`／全体は `fullText contains '{姓名}'` → read_file_content | **LinkedIn DM 全文エクスポート**（`{氏名}-Linkedinやりとり｜YYYY-MM-DD.md` を標準とする。`.pdf` も読込可だが下記理由で md 推奨）。本人との生のやり取りの一次情報 |
+| **Google Drive 候補者やりとり**（`Work > 07_候補者やりとりのコピー`、folder ID `1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S`） | search_files `parentId = '1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S'`／全体は `fullText contains '{姓名}'` → read_file_content | **LinkedIn DM 全文エクスポート**（`{氏名}-Linkedinやりとり｜YYYY-MM-DD.pdf`）。本人との生のやり取りの一次情報 |
 | **Google Drive 全体**（職務経歴書・面談メモ・提出物） | search_files `fullText contains '{姓名}'` → read_file_content | 職務経歴書（`*_職務経歴書.docx` 等）、ワークサンプル、内定通知書、面談メモ、候補者カード |
 | LinkedIn DM | ①上記 Google Drive の PDF エクスポート（一次情報）②ユーザー貼り付け素材 | DM 履歴（Claude から直接アクセス不可。**まず Drive の やりとり PDF を確認**、なければユーザー提供素材を取込む） |
 | Slack | slack_search_public_and_private + 候補者氏名 | 推薦・相談時の言及 |
@@ -59,8 +59,6 @@
 **Gmail 検索の詳細戦略は `agents/client-profile.md` セクション 4.3 参照**（共有 Gmail 由来は `SY/` ラベル下、ATS sender はランダム ID で識別不可なため subject の企業名+候補者名 or label でフィルタ）。
 
 **Google Drive は初回生成・同期の両方で必ず確認する（2026-06 佐藤指示・デフォルト化）。** `Work > 07_候補者やりとりのコピー` 配下に佐藤が候補者ごとの LinkedIn DM を PDF エクスポートしている（例：`栗原 佑蔵-Linkedinやりとり｜2026-06-02.pdf`）。職務経歴書・ワークサンプル・内定通知書は Drive 各所に散在するため、`fullText contains '{姓名}'` の Drive 横断検索を併用する。これらは**佐藤本人の Drive 内ファイル＝信頼できる内部ソース**であり、NG セクションの「Web からの未知 PDF」には該当しない（読み込んで可）。
-
-**保存形式は md を標準とする（2026-06 佐藤指示）。** PDF はテキスト抽出時に日付・記号の誤変換やリアクション・URL 羅列などのノイズが混じるため、Claude 取り込み用の正本は md とし、PDF は「見たままの証跡」が必要な場合のみ併存させる。既存の PDF も引き続き読み込み対象とする。
 
 ---
 
