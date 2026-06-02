@@ -36,13 +36,22 @@ def load_sa():
     raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
     if not raw:
         sys.exit("環境変数 GOOGLE_SERVICE_ACCOUNT_JSON が未設定です。")
+    raw = raw.strip()
+    # 1) ファイルパス指定
     if os.path.isfile(raw):
         with open(raw, encoding="utf-8") as f:
             return json.load(f)
+    # 2) 生 JSON 文字列
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        sys.exit("GOOGLE_SERVICE_ACCOUNT_JSON はファイルパスか JSON 文字列を指定してください。")
+        pass
+    # 3) base64 でエンコードされた JSON（改行・引用符の事故を避ける推奨形式）
+    try:
+        decoded = base64.b64decode(raw).decode("utf-8")
+        return json.loads(decoded)
+    except Exception:
+        sys.exit("GOOGLE_SERVICE_ACCOUNT_JSON はファイルパス / JSON文字列 / base64エンコードJSON のいずれかを指定してください。")
 
 
 def b64url(b):
