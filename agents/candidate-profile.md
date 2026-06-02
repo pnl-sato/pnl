@@ -51,10 +51,14 @@
 | Salesforce | salesforce_search_all + salesforce_query_records | Contact（候補者）・matching__c（パイプライン）・Account（クライアント、ATS URL含む） |
 | **Gmail 個人** (sato-y@pnl.co.jp) | search_threads → 候補者メアド・氏名 | 個人窓口での候補者直接やり取り |
 | **Gmail 共有由来**（個人 Gmail 内 `SY/` ラベル下に転送・自動振り分け済） | search_threads with `label:SY/{ATS or 社コード} "{候補者姓}"` | クライアントとのやり取り内に出てくる候補者情報、ATS 通知（HERP・HRMOS・Talentio 等） |
-| LinkedIn DM | ユーザーが PDF 等で貼り付け | DM 履歴（Claude から直接アクセス不可、ユーザー提供素材を取込む） |
+| **Google Drive 候補者やりとり**（`Work > 07_候補者やりとりのコピー`、folder ID `1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S`） | search_files `parentId = '1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S'`／全体は `fullText contains '{姓名}'` → read_file_content | **LinkedIn DM 全文エクスポート**（`{氏名}-Linkedinやりとり｜YYYY-MM-DD.pdf`）。本人との生のやり取りの一次情報 |
+| **Google Drive 全体**（職務経歴書・面談メモ・提出物） | search_files `fullText contains '{姓名}'` → read_file_content | 職務経歴書（`*_職務経歴書.docx` 等）、ワークサンプル、内定通知書、面談メモ、候補者カード |
+| LinkedIn DM | ①上記 Google Drive の PDF エクスポート（一次情報）②ユーザー貼り付け素材 | DM 履歴（Claude から直接アクセス不可。**まず Drive の やりとり PDF を確認**、なければユーザー提供素材を取込む） |
 | Slack | slack_search_public_and_private + 候補者氏名 | 推薦・相談時の言及 |
 
 **Gmail 検索の詳細戦略は `agents/client-profile.md` セクション 4.3 参照**（共有 Gmail 由来は `SY/` ラベル下、ATS sender はランダム ID で識別不可なため subject の企業名+候補者名 or label でフィルタ）。
+
+**Google Drive は初回生成・同期の両方で必ず確認する（2026-06 佐藤指示・デフォルト化）。** `Work > 07_候補者やりとりのコピー` 配下に佐藤が候補者ごとの LinkedIn DM を PDF エクスポートしている（例：`栗原 佑蔵-Linkedinやりとり｜2026-06-02.pdf`）。職務経歴書・ワークサンプル・内定通知書は Drive 各所に散在するため、`fullText contains '{姓名}'` の Drive 横断検索を併用する。これらは**佐藤本人の Drive 内ファイル＝信頼できる内部ソース**であり、NG セクションの「Web からの未知 PDF」には該当しない（読み込んで可）。
 
 ---
 
@@ -136,12 +140,13 @@
 6. Notion パイプライン / 面談メモ / 選考評価 を `候補者` リレーション経由で取得
 7. Salesforce: 候補者ページにある `SalesForce` URL があれば fetch、なければ氏名で salesforce_search_all。`matching__c` の Notion_Page_ID__c でパイプラインと紐付けがあれば取得
 8. Gmail: 候補者の Email アドレスで `search_threads`（最大30件）。各スレッドを1行に要約
-9. LinkedIn: ユーザー提供の PDF や貼り付け素材があれば取り込む
-10. Slack: `slack_search_public_and_private` で `{姓}` を検索。結果が膨大な場合は **sub-agent に同姓別人除外を依頼**
-11. Craft `documents create --title "{氏名}（{ふりがな}）" --folder 05BC363C-0FC2-4B15-AB3D-7C335AA5AB4E --icon 👤`
-12. `documents resolve-link` で rootBlockId を取得
-13. セクション順に `blocks add --id {rootBlockId} --position end --markdown "..."` で投入
-14. ユーザーに作成完了とドキュメント URL を報告
+9. **Google Drive（デフォルト・必須）**：`search_files` で `fullText contains '{姓名}'` を実行し、(a) `Work > 07_候補者やりとりのコピー`（folder ID `1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S`）配下の **LinkedIn DM エクスポート**（`{氏名}-Linkedinやりとり｜...pdf`）、(b) **職務経歴書**（`*_職務経歴書.docx`）、(c) ワークサンプル・内定通知書・面談メモ等を `read_file_content` で取得し要約。LinkedIn DM・詳細職歴はここが一次情報なので、ユーザー提供素材がなくても必ず確認する（佐藤本人の Drive ＝信頼できる内部ソース）
+10. LinkedIn（補助）: 上記 Drive PDF がない場合のみ、ユーザー提供の PDF や貼り付け素材を取り込む
+11. Slack: `slack_search_public_and_private` で `{姓}` を検索。結果が膨大な場合は **sub-agent に同姓別人除外を依頼**
+12. Craft `documents create --title "{氏名}（{ふりがな}）" --folder 05BC363C-0FC2-4B15-AB3D-7C335AA5AB4E --icon 👤`
+13. `documents resolve-link` で rootBlockId を取得
+14. セクション順に `blocks add --id {rootBlockId} --position end --markdown "..."` で投入
+15. ユーザーに作成完了とドキュメント URL を報告
 
 **Craft 投入時の注意：**
 - markdown 内で**ブロック区切りには `\n\n`（二重改行）を必ず使う**。単一改行は soft break として同一ブロック扱いになる
@@ -166,9 +171,10 @@
 
 1. Notion パイプライン / 選考評価 / 面談メモを再取得
 2. SF matching__c も再取得
-3. 「3. 選考中ポジション・打診履歴」「4. 面談メモ・印象」「5. 推薦履歴」を `blocks update` で差し替え or 追加
-4. 差分を要約してユーザーに報告（「面談メモ1件追加、選考ステータス2件更新」など）
-5. `Last synced` を更新
+3. **Google Drive（デフォルト・必須）**：`fullText contains '{姓名}'` で やりとり PDF・職務経歴書・新規提出物の追加・更新を確認（やりとり PDF は同名で日付更新される場合あり）
+4. 「3. 選考中ポジション・打診履歴」「4. 面談メモ・印象」「5. 推薦履歴」「6. LinkedIn DM」「9. 過去のやり取りログ」を `blocks update` で差し替え or 追加
+5. 差分を要約してユーザーに報告（「面談メモ1件追加、選考ステータス2件更新」など）
+6. `Last synced` を更新
 
 ---
 
