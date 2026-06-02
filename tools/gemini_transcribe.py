@@ -4,6 +4,10 @@
 使い方:
     GEMINI_API_KEY=xxxx python3 tools/gemini_transcribe.py <音声ファイル> [プロンプト]
 
+プロンプトの優先順位: 第2引数 > 環境変数 GEMINI_PROMPT > 既定プロンプト。
+長文プロンプトは GEMINI_PROMPT で渡すとクォート不要で楽。
+出力をファイルに逃がせば（> out.txt）全文を呼び出し側の文脈に載せずに済む。
+
 仕様:
     - 20MB 未満は inline_data で直接送信、それ以上は Files API でアップロードしてから処理。
     - 既定モデルは gemini-2.5-flash（環境変数 GEMINI_MODEL で変更可）。
@@ -129,7 +133,8 @@ def main():
     path = sys.argv[1]
     if not os.path.isfile(path):
         sys.exit(f"ファイルが見つかりません: {path}")
-    prompt = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_PROMPT
+    prompt = (sys.argv[2] if len(sys.argv) > 2
+              else os.environ.get("GEMINI_PROMPT") or DEFAULT_PROMPT)
     print(transcribe(path, prompt))
 
 
