@@ -55,6 +55,14 @@
 | **Google Drive 全体**（職務経歴書・面談メモ・提出物） | search_files `fullText contains '{姓名}'` → read_file_content | 職務経歴書（`*_職務経歴書.docx` 等）、ワークサンプル、内定通知書、面談メモ、候補者カード |
 | LinkedIn DM | ①上記 Google Drive の PDF エクスポート（一次情報）②ユーザー貼り付け素材 | DM 履歴（Claude から直接アクセス不可。**まず Drive の やりとり PDF を確認**、なければユーザー提供素材を取込む） |
 | Slack | slack_search_public_and_private + 候補者氏名 | 推薦・相談時の言及 |
+| **Google Drive 履歴書・職務経歴書** `マイドライブ/Work/Resume/{年}/`（folder ID: `1CM_5rKKyJ0UKizjW_AneUsy1gFX6h5V7`） | search_files `title contains '{候補者姓}'` | 候補者から受領した履歴書（生年月日・住所・連絡先・学歴・資格・配偶者情報）／職務経歴書（正確な職歴・役職遷移・実績数値・マネジメント規模） |
+
+**履歴書・職務経歴書の参照ルール（重要）：**
+
+- 候補者の年齢・連絡先・学歴・正確な職歴を確認する際は、まず Google Drive `Work/Resume/{年}/` を `title contains '{姓}'` または `fullText contains '{姓 名}'` で検索する
+- 受領年フォルダ（例: `2026`）配下に保存されているため、複数年にまたがる場合は最新年から確認
+- レジュメは Salesforce / Notion / 面談文字起こしより**正確かつ詳細**な事実情報源（生年月日・配偶者・扶養・住所など個人情報含む）
+- 面談文字起こしから推定した情報とレジュメで齟齬がある場合、**レジュメを優先**して SF・Notion の該当フィールドを訂正する
 
 **Gmail 検索の詳細戦略は `agents/client-profile.md` セクション 4.3 参照**（共有 Gmail 由来は `SY/` ラベル下、ATS sender はランダム ID で識別不可なため subject の企業名+候補者名 or label でフィルタ）。
 
