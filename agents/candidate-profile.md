@@ -154,7 +154,8 @@
 12. Craft `documents create --title "{氏名}（{ふりがな}）" --folder 05BC363C-0FC2-4B15-AB3D-7C335AA5AB4E --icon 👤`
 13. `documents resolve-link` で rootBlockId を取得
 14. セクション順に `blocks add --id {rootBlockId} --position end --markdown "..."` で投入
-15. ユーザーに作成完了とドキュメント URL を報告
+15. **スカウト評価ログへのアウトカム書き戻し（スカウト返信由来の新規作成時のみ）：** この候補者がスカウトへの返信で接点化した場合、`agents/scout-kit.md` §6.5 に従い評価ログへ結果を書き戻す。**媒体ID（BizReach 会員ID 等）をキー**に、該当ポジションの Craft `{社名}/positions/{ポジション}-scout-kit/scout_log_{YYYY-MM}.md`（直近2〜3ヶ月分）を検索し、該当行の後ろ3列に `返信日｜結果（返信/面談/通過/見送り）｜SF/Notion id` を `blocks update` で追記する。媒体IDが SF/Notion に残っていない場合は氏名で照合し、不確実ならユーザーに確認する。該当行が見つからなければスキップ（scout-kit 経由でない候補者）。既に SF/Notion を取得済みのため追加コストは小さい
+16. ユーザーに作成完了とドキュメント URL を報告
 
 **Craft 投入時の注意：**
 - markdown 内で**ブロック区切りには `\n\n`（二重改行）を必ず使う**。単一改行は soft break として同一ブロック扱いになる
