@@ -38,5 +38,18 @@
       "mcp__f9e68127-cb18-4257-9dfe-2377b812f5ac__slack_search_public",
       "mcp__f9e68127-cb18-4257-9dfe-2377b812f5ac__slack_search_public_and_private"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/hooks/bash_safety_guard.py\""
+          }
+        ]
+      }
+    ]
   }
 }
