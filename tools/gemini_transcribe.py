@@ -62,6 +62,7 @@ def _stream_generate(url, payload, out):
         url, data=body,
         headers={"Content-Type": "application/json"}, method="POST")
     total = 0
+    finish = None
     # SSE は1行ずつ "data: {json}" で届く。チャンク間隔は数秒程度なので
     # 1行ごとの読み取りタイムアウトは長めに取れば十分。
     with urllib.request.urlopen(req, timeout=600) as r:
@@ -76,13 +77,22 @@ def _stream_generate(url, payload, out):
                 obj = json.loads(chunk)
             except json.JSONDecodeError:
                 continue
+            pf = obj.get("promptFeedback", {})
+            if pf.get("blockReason"):
+                sys.stderr.write(f"[promptFeedback] blockReason="
+                                 f"{pf['blockReason']}\n")
             for cand in obj.get("candidates", []):
+                if cand.get("finishReason"):
+                    finish = cand["finishReason"]
                 for p in cand.get("content", {}).get("parts", []):
                     t = p.get("text", "")
                     if t:
                         out.write(t)
                         out.flush()
                         total += len(t)
+    if finish and finish != "STOP":
+        sys.stderr.write(f"[finishReason] {finish} "
+                         f"(出力が途中で打ち切られた可能性)\n")
     return total
 
 
