@@ -42,15 +42,48 @@ DEFAULT_PROMPT = (
 )
 
 
-def _req(url, data=None, headers=None, method="GET"):
+def _req(url, data=None, headers=None, method="GET", timeout=300):
     headers = headers or {}
     body = json.dumps(data).encode() if isinstance(data, (dict, list)) else data
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=300) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, r.read(), dict(r.headers)
     except urllib.error.HTTPError as e:
         return e.code, e.read(), dict(e.headers)
+
+
+def _stream_generate(url, payload, out):
+    """streamGenerateContent (SSE) を叩き、テキスト差分を逐次 out へ書き出す。
+    長尺音声で単発 generateContent が読み取りタイムアウトする問題を回避する
+    （チャンク到着ごとにソケット読み取りが進むため）。戻り値は累計文字数。"""
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"Content-Type": "application/json"}, method="POST")
+    total = 0
+    # SSE は1行ずつ "data: {json}" で届く。チャンク間隔は数秒程度なので
+    # 1行ごとの読み取りタイムアウトは長めに取れば十分。
+    with urllib.request.urlopen(req, timeout=600) as r:
+        for raw in r:
+            line = raw.decode("utf-8", "replace").strip()
+            if not line.startswith("data:"):
+                continue
+            chunk = line[5:].strip()
+            if not chunk or chunk == "[DONE]":
+                continue
+            try:
+                obj = json.loads(chunk)
+            except json.JSONDecodeError:
+                continue
+            for cand in obj.get("candidates", []):
+                for p in cand.get("content", {}).get("parts", []):
+                    t = p.get("text", "")
+                    if t:
+                        out.write(t)
+                        out.flush()
+                        total += len(t)
+    return total
 
 
 TEXT_EXT = {".txt", ".md", ".markdown", ".vtt", ".srt"}
@@ -133,20 +166,24 @@ def build_input_part(path):
     return {"file_data": {"mime_type": mime, "file_uri": uri}}
 
 
-def transcribe(path, prompt):
+def transcribe(path, prompt, out=None):
+    """生成結果を out（既定 stdout）へ書き出す。長尺音声でもタイムアウトしないよう
+    streamGenerateContent（SSE）で逐次受信する。"""
+    out = out or sys.stdout
     input_part = build_input_part(path)
-    url = f"{BASE}/v1beta/models/{MODEL}:generateContent?key={API_KEY}"
-    payload = {"contents": [{"parts": [{"text": prompt}, input_part]}]}
-    status, body, _ = _req(url, data=payload,
-                           headers={"Content-Type": "application/json"}, method="POST")
-    if status != 200:
-        sys.exit(f"[generateContent 失敗] {status} {body.decode(errors='replace')}")
-    data = json.loads(body)
+    payload = {
+        "contents": [{"parts": [{"text": prompt}, input_part]}],
+        "generationConfig": {"maxOutputTokens": 65536},
+    }
+    url = (f"{BASE}/v1beta/models/{MODEL}:streamGenerateContent"
+           f"?alt=sse&key={API_KEY}")
     try:
-        return "".join(p.get("text", "")
-                       for p in data["candidates"][0]["content"]["parts"])
-    except (KeyError, IndexError):
-        sys.exit(f"[応答の解析に失敗] {json.dumps(data, ensure_ascii=False)[:800]}")
+        total = _stream_generate(url, payload, out)
+    except urllib.error.HTTPError as e:
+        sys.exit(f"[streamGenerateContent 失敗] {e.code} "
+                 f"{e.read().decode(errors='replace')}")
+    if total == 0:
+        sys.exit("[応答が空] テキストが返りませんでした。")
 
 
 def main():
@@ -159,7 +196,8 @@ def main():
         sys.exit(f"ファイルが見つかりません: {path}")
     prompt = (sys.argv[2] if len(sys.argv) > 2
               else os.environ.get("GEMINI_PROMPT") or DEFAULT_PROMPT)
-    print(transcribe(path, prompt))
+    transcribe(path, prompt)
+    sys.stdout.write("\n")
 
 
 if __name__ == "__main__":
