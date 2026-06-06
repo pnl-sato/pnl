@@ -52,6 +52,32 @@
 
 ---
 
+## 2.4 クライアント判定（候補者の在籍企業と切り分ける）★初回生成・夜間 backfill で必須
+
+SF の取引先(Account)には、**P&L のクライアント**だけでなく**候補者の在籍企業（職歴・現職の会社）**も大量に登録されている（2026-06 時点で Account 約14,000件のうち、実クライアントは171件のみ）。在籍企業をクライアントとして Craft に md 化してしまう事故（過去の夜間 backfill で多発）を防ぐため、Account を「クライアント」として扱う前に必ず以下で判定する。
+
+**クライアントの判定条件（唯一の基準）：** `Contract_Status__c = '締結済み'`（契約状況＝締結済み）の Account **のみ**がクライアント。
+
+| `Contract_Status__c`（契約状況） | 意味 | 扱い |
+|---|---|---|
+| `締結済み` | 契約締結済みの現クライアント | ✅ クライアント（md 化対象） |
+| `null`（未設定） | 大多数は**候補者の在籍企業**（職歴の会社） | ❌ 非クライアント・md 化しない |
+| `未締結` | 未契約 | ❌ 非クライアント・md 化しない |
+| `締結対応中` | 契約手続き中（まだクライアントではない） | ❌ 非クライアント（締結後に対象化） |
+| `終了` | 取引終了の旧クライアント（クローズ系） | ❌ 除外 |
+
+SOQL 例：
+
+```sql
+SELECT Id, Name, Contract_Status__c, Notion_Page_ID__c, ATS_URL__c, OwnerId
+FROM Account
+WHERE Contract_Status__c = '締結済み'
+```
+
+> 候補者プロファイル側で在籍企業（職歴の会社情報）を参照する目的で Account を fetch するのは可。ただしそれを `12_Client｜企業` 配下に md 化してはならない。クライアント md 化は `Contract_Status__c = '締結済み'` を通過した Account に限る。
+
+---
+
 ## 2.5 既存判定の多重照合（重複作成防止）★夜間 backfill では必須
 
 社名の表記揺れ（「株式会社X」「X」「X Inc.」「英語名」）や Craft search のスコープ齟齬で**既存クライアントの薄い重複コピーを作ってしまう事故**が発生したため、初回生成モードに入る前に以下の多重照合を必ず実施する。
@@ -109,7 +135,7 @@
 | Notion ポジションDB `collection://1fb7d017-b6a0-8052-a7c9-000b1aa76cda` | search / fetch | JD・要件・報酬レンジ・注力フラグ・契約形態・料率 |
 | Notion パイプラインDB `collection://20f7d017-b6a0-807c-a60f-000b827c6841` | search / fetch（ポジション経由） | 進行中候補者・選考ステータス |
 | Notion 面談メモDB `collection://20c7d017-b6a0-8014-82f5-000b750ec0a8` | search / fetch（企業／ポジションリレーション経由） | 採用ヒアリング・面接同席メモ |
-| SF Account | salesforce_search_all + ATS_URL__c フィールド | 会社レコード、**ATS URL**（ドメイン抽出元）、契約状況、Notion Page ID |
+| SF Account | salesforce_search_all + ATS_URL__c フィールド | 会社レコード、**ATS URL**（ドメイン抽出元）、**契約状況 `Contract_Status__c`（クライアント判定の基準。セクション2.4）**、Notion Page ID |
 | SF matching__c | salesforce_query_records WHERE ApplyCompany__c = '{社AccountId}' | **過去全推薦履歴**（脱落理由・パターン分析の宝庫） |
 | Slack | slack_search_public_and_private | 社内での議論・推薦相談 |
 | **Gmail 個人** (sato-y@pnl.co.jp) | search_threads | 候補者・クライアント担当者との個人窓口やり取り |
