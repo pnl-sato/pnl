@@ -54,6 +54,7 @@
 | **Google Drive 候補者やりとり**（`Work > 07_候補者やりとりのコピー`、folder ID `1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S`） | search_files `parentId = '1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S'`／全体は `fullText contains '{姓名}'` → read_file_content | **LinkedIn DM 全文エクスポート**（`{氏名}-Linkedinやりとり｜YYYY-MM-DD.pdf`）。本人との生のやり取りの一次情報 |
 | **Google Drive 全体**（職務経歴書・面談メモ・提出物） | search_files `fullText contains '{姓名}'` → read_file_content | 職務経歴書（`*_職務経歴書.docx` 等）、ワークサンプル、内定通知書、面談メモ、候補者カード |
 | LinkedIn DM | ①上記 Google Drive の PDF エクスポート（一次情報）②ユーザー貼り付け素材 | DM 履歴（Claude から直接アクセス不可。**まず Drive の やりとり PDF を確認**、なければユーザー提供素材を取込む） |
+| **Facebook Messenger エクスポート**（佐藤の Meta データエクスポート。Drive 例 `meta-YYYY-Mon-DD-...` → `.../your_facebook_activity/messages/inbox/{相手}/message_1.json`） | search_files で対象エクスポートフォルダ→`inbox` 配下を列挙→該当スレッドの `message_1.json`。**大きい・二重エンコードのためサブエージェントでデコード**（下記注参照） | 候補者本人との Messenger 全履歴（1対1／グループ）。関係性・温度感・過去経緯の一次情報 |
 | Slack | slack_search_public_and_private + 候補者氏名 | 推薦・相談時の言及 |
 | **Google Drive 履歴書・職務経歴書** `マイドライブ/Work/Resume/{年}/`（folder ID: `1CM_5rKKyJ0UKizjW_AneUsy1gFX6h5V7`） | search_files `title contains '{候補者姓}'` | 候補者から受領した履歴書（生年月日・住所・連絡先・学歴・資格・配偶者情報）／職務経歴書（正確な職歴・役職遷移・実績数値・マネジメント規模） |
 
@@ -67,6 +68,12 @@
 **Gmail 検索の詳細戦略は `agents/client-profile.md` セクション 4.3 参照**（共有 Gmail 由来は `SY/` ラベル下、ATS sender はランダム ID で識別不可なため subject の企業名+候補者名 or label でフィルタ）。
 
 **Google Drive は初回生成・同期の両方で必ず確認する（2026-06 佐藤指示・デフォルト化）。** `Work > 07_候補者やりとりのコピー` 配下に佐藤が候補者ごとの LinkedIn DM を PDF エクスポートしている（例：`栗原 佑蔵-Linkedinやりとり｜2026-06-02.pdf`）。職務経歴書・ワークサンプル・内定通知書は Drive 各所に散在するため、`fullText contains '{姓名}'` の Drive 横断検索を併用する。これらは**佐藤本人の Drive 内ファイル＝信頼できる内部ソース**であり、NG セクションの「Web からの未知 PDF」には該当しない（読み込んで可）。
+
+**Facebook Messenger エクスポートの読み方（重要・2026-06 佐藤指示で記録）：** 佐藤の Meta データエクスポートが Drive にあり（例：`meta-2026-Jun-08-...` → `facebook-{user}-.../your_facebook_activity/messages/inbox/{相手}/message_1.json`）、候補者本人との Messenger 履歴を相手ごとに拾える。読む際は次の2点に注意する。
+
+- **フォルダ名は「漢字の中国語ピンイン読み」に機械変換されている。** 例：`陣山 一樹` → `zhenshanyishu_xxxx`、`佐藤 雄太` → `…sato…`。日本語名・英語名では引けないので、**対象人物の漢字をピンイン読みに変換して `inbox` 配下を探す**。グループスレッドは参加者名のピンインが連結される（例：`Asantosan_…`）。
+- **本文は二重エンコード（mojibake）されている。** Facebook の JSON は UTF-8 を latin-1 エスケープした形式（`é£`＝「陣」など）。参加者名・`sender_name`・`content`・リアクションを `s.encode('latin-1').decode('utf-8')` で復元する。
+- **ファイルが数百KBと大きく二重エンコードで肥大するため、`download_file_content` でローカルに落とし、サブエージェントで python デコード→`timestamp_ms` を JST 昇順に整形（`日時｜送信者｜本文`）→要約＋重要引用のみ親に返す**。生 JSON・全文を親コンテキストに流さない。原本は Drive が正本、Craft プロファイルには要約と採用観点の重要引用のみ載せる。
 
 ---
 
