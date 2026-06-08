@@ -161,7 +161,7 @@
 12. Craft `documents create --title "{氏名}（{ふりがな}）" --folder 05BC363C-0FC2-4B15-AB3D-7C335AA5AB4E --icon 👤`
 13. `documents resolve-link` で rootBlockId を取得
 14. セクション順に `blocks add --id {rootBlockId} --position end --markdown "..."` で投入
-15. **スカウト評価ログへのアウトカム書き戻し（スカウト返信由来の新規作成時のみ）：** この候補者がスカウトへの返信で接点化した場合、`agents/scout-kit.md` §6.5 に従い評価ログへ結果を書き戻す。**媒体ID（BizReach 会員ID 等。SF Contact に保存されている）をキー**に、該当ポジションの Craft `{社名}/positions/{ポジション}-scout-kit/scout_log_{YYYY-MM}.md`（直近2〜3ヶ月分）を検索し、該当行の後続列に `返信日｜結果（面談/推薦/通過/見送り/辞退）｜SF id` を `blocks update` で追記する。SF にも媒体IDが無い場合は氏名で照合し、不確実ならユーザーに確認する。該当行が見つからなければスキップ（scout-kit 経由でない候補者）。既に SF を取得済みのため追加コストは小さい
+15. **スカウト評価ログへのアウトカム書き戻し（スカウト返信由来の新規作成時のみ）：** この候補者がスカウトへの返信で接点化した場合、`agents/scout-kit.md` §6.5 に従い評価ログへ結果を書き戻す。**媒体ID（BizReach＝会員ID／LinkedIn＝プロフィールURL の slug／その他＝媒体の安定ID。いずれも SF Contact に保存されている。`agents/scout-kit.md` §4.2）をキー**に、該当ポジションの Craft `{社名}/positions/{ポジション}-scout-kit/scout_log_{YYYY-MM}.md`（直近2〜3ヶ月分）を検索し、該当行の後続列に `返信日｜結果（面談/推薦/通過/見送り/辞退）｜SF id` を `blocks update` で追記する。SF にも媒体IDが無い場合は氏名で照合し、不確実ならユーザーに確認する。該当行が見つからなければスキップ（scout-kit 経由でない候補者）。既に SF を取得済みのため追加コストは小さい
 16. ユーザーに作成完了とドキュメント URL を報告
 
 **Craft 投入時の注意：**
