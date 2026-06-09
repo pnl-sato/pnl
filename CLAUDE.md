@@ -74,6 +74,7 @@ Mobile：080-3930-1714
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
 - **Craft に書き込み・編集する場合（候補者プロファイル・クライアントmd・ポジションmd 等、`craft_write` を使う全タスク）** → `agents/craft-writing.md` を読む（改行・bullet 表示の落とし穴と確実に動く構文）
 - **音声・録音の文字起こし／議事録作成を行う場合（Notion `AppSoundcore` 等の ogg、面談・打ち合わせ録音）** → `agents/transcription.md` を読む（Gemini 連携パイプライン。`tools/` のスクリプトで取得→文字起こし→Notion追記＋Googleドキュメント保存→議事録同期まで、音声/全文をコンテキストに通さず実行）
+- **面接・面談（打ち合わせ）の確定予定をカレンダー登録する場合** → `agents/calendar.md` を読む（必ず `03_面接・面談` カレンダーに `{種別}：{企業}｜{候補者}` 形式で登録。プライマリには入れない。確定枠のみ・候補者を attendee にしない）
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 
 ## 6. 動作の原則
