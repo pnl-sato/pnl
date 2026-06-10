@@ -76,7 +76,7 @@ Mobile：080-3930-1714
 - **音声・録音の文字起こし／議事録作成を行う場合（Notion `AppSoundcore` 等の ogg、面談・打ち合わせ録音）** → `agents/transcription.md` を読む（Gemini 連携パイプライン。`tools/` のスクリプトで取得→文字起こし→Notion追記＋Googleドキュメント保存→議事録同期まで、音声/全文をコンテキストに通さず実行）
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 - **Salesforce（CRM）を読み込む場合（候補者・企業・案件・パイプライン）** → `agents/salesforce.md` を読む（オブジェクト別の既定項目セットで取得し、面談メモ・サマリー等の長文は要求時のみ追加。全項目取得は禁止）
-- **Salesforce のスキーマ確認・SOQL を組む場合** → `sf_structure.md` を読む（オブジェクト・主要フィールド・選択肢・よく使う SOQL の正本で、`agents/salesforce.md` の既定項目セットの土台になるスキーマ参照。`agents/routines.md`「④ 週末SF構造リフレッシュ」が週次で describe→蒸留→差分時のみ更新。週途中でスキーマと食い違って失敗したら、その1オブジェクトだけライブ `describe` して進める）
+- **Salesforce のスキーマ確認・SOQL を組む場合** → `sf_structure.md` を読む（オブジェクト・主要フィールド・選択肢・よく使う SOQL の正本で、`agents/salesforce.md` の既定項目セットの土台になるスキーマ参照。`agents/routines.md`「④ 週末SF構造リフレッシュ」が週次で describe→蒸留→差分時のみ PR を開き手動マージで更新。週途中でスキーマと食い違って失敗したら、その1オブジェクトだけライブ `describe` して進める）
 
 ## 6. 動作の原則
 

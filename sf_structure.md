@@ -2,7 +2,7 @@
 
 > **役割の分担（重要）：** SF の「**読み方＝オブジェクト別の既定項目セット**」は `agents/salesforce.md` が正本。本ファイルはそれを補完する**スキーマ参照**で、describe が一番効く部分＝**選択肢（picklist）値のカタログ**・**よく使う SOQL**・**オブジェクト/フィールドの増減**を週次で最新化して持つ。フィールド名の一覧表は salesforce.md と重複させない（あちらを参照）。SF を読むタスクは `agents/salesforce.md`、WHERE 句の選択肢値や SOQL の組み立て・スキーマ変更の確認はこのファイル、と使い分ける。
 >
-> **更新方式：** `agents/routines.md`「④ 週末SF構造リフレッシュ」が**週1回**、対象オブジェクトを `salesforce_describe_object` で取得→**選択肢値・フィールド増減だけ蒸留**→**差分があるときだけ main を更新**する。重い describe を週1セッションに閉じ込め、平日タスクはこの蒸留版を読むだけにする（CLAUDE.md §13）。
+> **更新方式：** `agents/routines.md`「④ 週末SF構造リフレッシュ」が**週1回**、対象オブジェクトを `salesforce_describe_object` で取得→**選択肢値・フィールド増減だけ蒸留**→**差分があるときだけ `automation/sf-structure-refresh` ブランチで PR を開き、佐藤が diff をレビューして手動マージ**する（スキーマ変化を確認してから入れるため PR 経由。GitHub プロキシは push を checkout 中のブランチに限定する点に注意）。重い describe を週1セッションに閉じ込め、平日タスクはこの蒸留版を読むだけにする（CLAUDE.md §13）。
 >
 > **最終更新：** 2026-06-10（選択肢値カタログを**ライブ describe で確定**。Account / Contact / Opportunity / matching__c の picklist 実値を反映し「暫定 / 要列挙」を解消。Territory__c / ProposablePositionMulti__c は件数が多いため抜粋。OwnerId 等の ID 値・フィールド増減の網羅確認は次回の週末リフレッシュ（routine ④）で実施）。
 >
