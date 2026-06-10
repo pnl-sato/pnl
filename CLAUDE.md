@@ -70,6 +70,7 @@ Mobile：080-3930-1714
 - **候補者ごとのプロファイルを作成・追記・同期する場合** → `agents/candidate-profile.md` を読む（保存先は Craft `work > 10_Recruitment > 13_Candidate｜候補者` フォルダ）
 - **クライアント／ポジションプロファイル・マッチング評価を作成・利用する場合** → `agents/client-profile.md` を読む（保存先は Craft `work > 10_Recruitment > 12_Client｜企業` フォルダ）
 - **候補者面談のトークスクリプト・進行案・面談メモを作成する場合** → `agents/interview-stance.md` を読む（佐藤の面談スタンス・上長フィードバックの抽出）
+- **面接・面談（打ち合わせ）の確定予定をカレンダー登録する場合** → `agents/calendar.md` を読む（選考プロセス上のクライアント面接は必ず `03_面接・面談` カレンダーに `{種別}：{企業}｜{候補者}` 形式で登録。プライマリには入れない。確定枠のみ・候補者を attendee にしない。佐藤主催の候補者インタビューの登録形式は `agents/candidate-mail.md` 参照）
 - **営業戦略・ポートフォリオ・注力クライアント選定など仕事の上位方針を扱う場合** → `agents/work-approach.md` を読む（1on1由来の最新方針）
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
 - **Craft に書き込み・編集する場合（候補者プロファイル・クライアントmd・ポジションmd 等、`craft_write` を使う全タスク）** → `agents/craft-writing.md` を読む（改行・bullet 表示の落とし穴と確実に動く構文）
