@@ -281,3 +281,9 @@ Notion 等ホスト型コネクタ（MCP）への**書き込み**が `requires a
 5. **再開トリガーを伝える。** 「新セッションで『未保存タスクの引き継ぎから再開して』と言ってください」と案内する。
 
 **新セッション側の振る舞い：** 「引き継ぎから再開」「前回の未保存分」等が言及されたら、Craft `_引き継ぎ｜未保存タスク` の最新エントリを読み、退避された成果物と保存仕様どおりに**書き込みのみ**を再実行する。完了したらそのエントリに「✅ 保存済み（日時）」を追記する。
+
+**変種：特定の読み取りツールだけが `requires approval` で落ちる場合（2026-06 確認）。** Google Drive コネクタで `search_files` だけが `Streamable HTTP error … requires approval` を返し、`list_recent_files` / `get_file_metadata` / `read_file_content` は通る、という事象を確認した。クエリ種別（`fullText` / `parentId` / `title`）に依らず `search_files` 単体が落ちるのが特徴。**settings.json の allow に当該ツールが入っていても落ちる**（＝権限ではなくコネクタ側のツール別同意／スコープ不足）。切り分けと対処は以下：
+
+1. **コネクタ全体の死活を1本で切り分ける。** 同じサーバーの別の読み取り（Drive なら `list_recent_files` を1回）を叩く。通れば「コネクタは生きており、そのツールだけ同意切れ」と確定する。
+2. **恒久対策（要・佐藤操作）：** Claude のコネクタ設定で当該コネクタ（Google Drive 等）を**再接続・再認可**してスコープ同意をやり直す。Web セッションには承認ダイアログが出ないため、設定/アプリ側での再接続が必要。docs：https://code.claude.com/docs/en/claude-code-on-the-web
+3. **当座の回避策（Claude 側で即適用可・`search_files` 代替）：** 候補者/クライアントの Drive 探索（`agents/candidate-profile.md` §3・`agents/client-profile.md` §4）は `search_files` 前提だが、落ちている間は次で代替する。(a) 佐藤が直近保存した やりとり/レジュメは `list_recent_files`（recency 順）に出るので拾える、(b) folder/fileId が既知なら `get_file_metadata` + `read_file_content` で直接取得、(c) フォルダ横断や過去ファイルの全文検索は完全代替できないため、その範囲は「未取得（Drive search 承認エラー）」と明記し、再接続後の同期で追補する。リトライ連打はしない（§14 冒頭の原則を踏襲）。
