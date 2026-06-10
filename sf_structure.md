@@ -4,7 +4,7 @@
 >
 > **更新方式：** `agents/routines.md`「④ 週末SF構造リフレッシュ」が**週1回**、対象オブジェクトを `salesforce_describe_object` で取得→**選択肢値・フィールド増減だけ蒸留**→**差分があるときだけ main を更新**する。重い describe を週1セッションに閉じ込め、平日タスクはこの蒸留版を読むだけにする（CLAUDE.md §13）。
 >
-> **最終更新：** （初回リフレッシュ未実行。本ファイルは CLAUDE.md / agents/salesforce.md / agents/routines.md / agents/client-profile.md で既出の事実だけで**暫定シード**したもの。`暫定` / `要列挙` と付した箇所は describe 未検証で、初回リフレッシュで確定する）
+> **最終更新：** 2026-06-10（選択肢値カタログを**ライブ describe で確定**。Account / Contact / Opportunity / matching__c の picklist 実値を反映し「暫定 / 要列挙」を解消。Territory__c / ProposablePositionMulti__c は件数が多いため抜粋。OwnerId 等の ID 値・フィールド増減の網羅確認は次回の週末リフレッシュ（routine ④）で実施）。
 >
 > **週途中の鮮度フォールバック（重要）：** タスク中に選択肢値やフィールドが本ファイルと食い違って操作が失敗したら、**その1オブジェクトだけ** `salesforce_describe_object` でライブ確認して進める（本ファイル全体の再取得はしない）。差分は次回の週末リフレッシュが回収する。
 
@@ -42,21 +42,42 @@
 ## 選択肢（picklist）値カタログ ← 本ファイルの主目的
 
 WHERE 句や絞り込みで使う選択肢の正規値。**ここが describe で一番ドリフトする部分**なので週次で最新化する。
+（下記は **2026-06-10 のライブ describe で確定済み**。Territory__c / ProposablePositionMulti__c のみ件数が多く抜粋。）
 
 ### Account.`Contract_Status__c`（契約状況／クライアント判定の鍵）
 - `締結済み` … **= クライアント**（client-profile.md §2.4）
 - `未締結` / `締結対応中` / `終了` / null … 非クライアント（候補者の在籍企業など）
-- 〔選択肢の正確な API 値は **暫定**。describe 検証待ち〕
 
-### matching__c.`phase__c`（選考フェーズ）
+### matching__c.`phase__c`（選考フェーズ・必須）
 - **アクティブ判定 = `NOT IN ('脱落','入社済み')`**
-- 既知の値：`脱落` / `入社済み`。**その他の段階値は 要列挙**（describe で確定）
+- 全選択肢（順）：`スカウトメール送付済み` / `返信あり、P&L面談日程調整` / `P&L面談` / `応募意志確認` / `書類選考` / `カジュアル面談` / `1次面接` / `SPI/技術テスト` / `2次面接` / `最終面接` / `オファー面談` / `内定承諾/退職交渉・引き継ぎ` / `入社済み` / `脱落`
 
-### Opportunity.`StageName`（案件フェーズ）
-- **要列挙**（describe で確定）
+### matching__c.`DropReason__c`（脱落理由）
+- `辞退` / `お見送り` / `応答なし` / `リリース`
 
-### その他 picklist（`Contact.active__c` / `reply__c` / `English__c` / `FinalEducationList__c` / `Territory__c` / `Position__c`、`Opportunity.Jobtype__c` / `priority__c` / `typeofcontract__c`、`matching__c.DropReason__c` / `retainerphase__c` 等）
-- **要列挙**（初回リフレッシュで、各 picklist の選択肢値をここに展開する）
+### matching__c.`retainerphase__c`（リテーナー状況）
+- `ーーー` / `提案中：先方検討中` / `失注：受注ならず` / `リテーナー対応中` / `成功：候補者決定` / `失敗：候補者決定ならず` / `その他`
+
+### Opportunity.`StageName`（案件フェーズ・必須）
+- `open` / `クローズ(P&L決定)` / `クローズ(他社経由)` / `クローズ(その他事由)` / `応答なし` / `資料請求` / `リード｜ウェビナー` / `商談調整中` / `商談決定` / `商談済` / `クローズした不成立取引` / `成約`
+
+### Opportunity.`Jobtype__c`（職種）
+- `CxO` / `営業` / `マーケティング` / `人事` / `コーポレート` / `デザイナー` / `エンジニア` / `データサイエンティスト` / `コンサル` / `PdM` / `PMM` / `PjM` / `カスタマーサクセス` / `事業開発` / `経営企画` / `ファイナンス`
+
+### Opportunity.`priority__c` / `typeofcontract__c`
+- priority__c：`高` / `中` / `低`
+- typeofcontract__c：`通常Fee` / `UpFee` / `リテーナー`
+
+### Contact 主要 picklist
+- `Source__c`（ソース）：`LinkedIn` / `ビズリーチ` / `リクルートダイレクトスカウト` / `eight` / `日経転職版` / `リファラル` / `Facebook` / `X` / `YouTrust` / `doda X` / `ミドルの転職` / `OpenWork` / `Pitta` / `Liiga` / `SNS` / `その他`
+- `reply__c`（スカウト返信）：`返信無し` / `返信有り`
+- `English__c`：`ネイティブレベル` / `ビジネス会話レベル` / `日常会話レベル` / `基礎会話レベル`
+- `FinalEducationList__c`（最終学歴）：`大学院卒(博士)以上` / `大学院卒(MBA)以上` / `大学院卒(修士)以上` / `大学卒以上` / `高専・専門・短大卒以上` / `高校卒業以上` / `その他`
+- `Position__c`（役職＝職種大分類）：`経営・管理・人事` / `営業・サービス` / `マーケ・広告` / `IT・ゲーム・デザイン` / `コンサルタント・専門職` / `金融` / `メディカル`
+- `CurrentSalary__c`（現年収レンジ）：`500万円未満` / `500-600万円` / `600-750万円` / `750-1,000万円` / `1,000-1,250万円` / `1,250-1,500万円` / `1,500-2,000万円` / `2,000-3,000万円` / `3,000-5,000万円` / `5,000万円以上`
+- `RemoteRequirement__c` / `SideWorkRequirement__c`：`有` / `無` / `どちらでも可`
+- `CarefulPerson__c`（要注意人物・複数選択）：`犯罪歴有` / `鬱履歴有` / `性格難` / `体調不良` / `その他`
+- `Territory__c`（役職ポジション）・`ProposablePositionMulti__c`（提案可能ポジション）：**選択肢が各100件前後と多いため全列挙しない**。CEO/COO/CFO/CTO/CHRO/CISO/PdM/事業開発… 等の職位・職種が網羅されている。WHERE で個別値が要るときは `salesforce_describe_object` でその場確認する。
 
 ---
 
