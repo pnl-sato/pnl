@@ -75,6 +75,7 @@ Mobile：080-3930-1714
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
 - **Craft に書き込み・編集する場合（候補者プロファイル・クライアントmd・ポジションmd 等、`craft_write` を使う全タスク）** → `agents/craft-writing.md` を読む（改行・bullet 表示の落とし穴と確実に動く構文）
 - **音声・録音の文字起こし／議事録作成を行う場合（Notion `AppSoundcore` 等の ogg、面談・打ち合わせ録音）** → `agents/transcription.md` を読む（Gemini 連携パイプライン。`tools/` のスクリプトで取得→文字起こし→Notion追記＋Googleドキュメント保存→議事録同期まで、音声/全文をコンテキストに通さず実行）
+- **朝のその日の ToDo を生成する場合（注力ポジションのスカウト送信ノルマ＝今日の通数も算出して含める）** → `agents/daily-todo.md` を読む
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 - **Salesforce（CRM）を読み込む場合（候補者・企業・案件・パイプライン）** → `agents/salesforce.md` を読む（オブジェクト別の既定項目セットで取得し、面談メモ・サマリー等の長文は要求時のみ追加。全項目取得は禁止）
 - **Salesforce のスキーマ確認・SOQL を組む場合** → `sf_structure.md` を読む（オブジェクト・主要フィールド・選択肢・よく使う SOQL の正本で、`agents/salesforce.md` の既定項目セットの土台になるスキーマ参照。`agents/routines.md`「④ 週末SF構造リフレッシュ」が週次で describe→蒸留→差分時のみ PR を開き手動マージで更新。週途中でスキーマと食い違って失敗したら、その1オブジェクトだけライブ `describe` して進める）
@@ -267,7 +268,7 @@ git push origin main
 
 **日次のタスク運用（参考）：**
 
-- 朝は新セッションで開始し、「今日のタスクを Notion ToDo と前日の業務ログから優先度順にリストして」から始めるのが軽い（読み込みは ToDo DB ＋業務ログ1枚で済む）。ToDo の取得は §10 のとおり `tools/notion_active_todos.py --category "Pole&Line"`（ステータス≠完了の正本）を使い、件名検索で完了済みを混ぜないこと。
+- 朝は新セッションで開始し、「今日のタスクを Notion ToDo と前日の業務ログから優先度順にリストして」から始めるのが軽い（読み込みは ToDo DB ＋業務ログ1枚で済む）。ToDo の取得は §10 のとおり `tools/notion_active_todos.py --category "Pole&Line"`（ステータス≠完了の正本）を使い、件名検索で完了済みを混ぜないこと。**朝のTODO生成の詳細手順（注力ポジションのスカウト送信ノルマ＝今日の通数の算出を含む）は `agents/daily-todo.md` に従う。**
 - 実タスクの正本は Notion ToDo DB（§10）。日次の俯瞰・サマリーは Craft `15_DailyLog｜業務ログ` に1日1枚残す。
 
 ## 14. MCP 書き込みが「承認待ち（requires approval）」で止まったときの動き方（全セッション適用）
