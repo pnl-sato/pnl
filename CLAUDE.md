@@ -31,7 +31,7 @@
 | **Craft** | 文章作成の作業場（推薦状・スカウト文の下書き、面談メモ、AIプロンプト管理） |
 | **Gmail** | クライアント／候補者とのメール |
 | **Slack** | 社内コミュニケーション |
-| **Salesforce** | CRM（一部の管理） |
+| **Salesforce** | CRM（一部の管理）。読み込み時の既定項目セットは `agents/salesforce.md` を参照 |
 | **NotebookLM** | 打ち合わせ・面談ログの要約 |
 | **ChatGPT / Gemini** | プロンプト実行（Craft内にプロンプト保管） |
 
@@ -75,6 +75,7 @@ Mobile：080-3930-1714
 - **Craft に書き込み・編集する場合（候補者プロファイル・クライアントmd・ポジションmd 等、`craft_write` を使う全タスク）** → `agents/craft-writing.md` を読む（改行・bullet 表示の落とし穴と確実に動く構文）
 - **音声・録音の文字起こし／議事録作成を行う場合（Notion `AppSoundcore` 等の ogg、面談・打ち合わせ録音）** → `agents/transcription.md` を読む（Gemini 連携パイプライン。`tools/` のスクリプトで取得→文字起こし→Notion追記＋Googleドキュメント保存→議事録同期まで、音声/全文をコンテキストに通さず実行）
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
+- **Salesforce（CRM）を読み込む場合（候補者・企業・案件・パイプライン）** → `agents/salesforce.md` を読む（オブジェクト別の既定項目セットで取得し、面談メモ・サマリー等の長文は要求時のみ追加。全項目取得は禁止）
 
 ## 6. 動作の原則
 
