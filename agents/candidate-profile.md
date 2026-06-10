@@ -153,7 +153,7 @@
 4. ヒットが複数 → 候補をリスト表示してユーザー選択（社名等で絞り込み）
 5. 候補者ページを fetch → 基本プロフィール埋め
 6. Notion パイプライン / 面談メモ / 選考評価 を `候補者` リレーション経由で取得
-7. Salesforce: 候補者ページにある `SalesForce` URL があれば fetch、なければ氏名で salesforce_search_all。`matching__c` の Notion_Page_ID__c でパイプラインと紐付けがあれば取得
+7. Salesforce: 候補者ページにある `SalesForce` URL があれば fetch、なければ氏名で salesforce_search_all。`matching__c` の Notion_Page_ID__c でパイプラインと紐付けがあれば取得。**この初回生成（および面談メモ・選考理由を反映する同期更新）では、`agents/salesforce.md` の既定項目セットに加えて長文項目も取得する**（Contact の `InterviewMemo__c`／`Summary__c`／`Tenshokujiku__c`／`Competitors__c`／`pros_cons__c`／`memo__c`、matching__c の `PLmemo__c`／`DropReasonDetail__c` 等）。長文を弾く既定はルーティン参照用で、プロファイル集約はこれらの長文が一次情報になるため
 8. Gmail: 候補者の Email アドレスで `search_threads`（最大30件）。各スレッドを1行に要約
 9. **Google Drive（デフォルト・必須）**：`search_files` で `fullText contains '{姓名}'` を実行し、(a) `Work > 07_候補者やりとりのコピー`（folder ID `1EUaVks1dg8svLZG1voMVJ39UBgo8pW2S`）配下の **LinkedIn DM エクスポート**（`{氏名}-Linkedinやりとり｜...pdf`）、(b) **職務経歴書**（`*_職務経歴書.docx`）、(c) ワークサンプル・内定通知書・面談メモ等を `read_file_content` で取得し要約。LinkedIn DM・詳細職歴はここが一次情報なので、ユーザー提供素材がなくても必ず確認する（佐藤本人の Drive ＝信頼できる内部ソース）
 10. LinkedIn（補助）: 上記 Drive PDF がない場合のみ、ユーザー提供の PDF や貼り付け素材を取り込む

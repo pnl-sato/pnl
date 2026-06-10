@@ -142,6 +142,8 @@ WHERE Contract_Status__c = '締結済み'
 | Notion 面談メモDB `collection://20c7d017-b6a0-8014-82f5-000b750ec0a8` | search / fetch（企業／ポジションリレーション経由） | 採用ヒアリング・面接同席メモ |
 | SF Account | salesforce_search_all + ATS_URL__c フィールド | 会社レコード、**ATS URL**（ドメイン抽出元）、**契約状況 `Contract_Status__c`（クライアント判定の基準。セクション2.4）**、Notion Page ID |
 | SF matching__c | salesforce_query_records WHERE ApplyCompany__c = '{社AccountId}' | **過去全推薦履歴**（脱落理由・パターン分析の宝庫） |
+
+> **SF取得時の項目方針：** 取得項目は `agents/salesforce.md` の既定セットに準拠する。ただし**プロファイル初回生成・同期更新では長文項目も取得する**（弾かない）。クライアント／ポジション集約では matching__c の `DropReasonDetail__c`（脱落理由詳細）・`PLmemo__c`・`others__c`（申し送り）、Opportunity の `information__c`・`memo__c`・`Description`（要件・JD）、Account の `Description`・`contract_memo__c` が推薦傾向・要件の一次情報になるため。ルーティンの参照・マッチング走査では既定セットのみ。
 | Slack | slack_search_public_and_private | 社内での議論・推薦相談 |
 | **Gmail 個人** (sato-y@pnl.co.jp) | search_threads | 候補者・クライアント担当者との個人窓口やり取り |
 | **Gmail 共有由来**（個人 Gmail 内 `SY/` ラベル下に転送・自動振り分け済） | search_threads with `label:SY/{コード}` | **クライアントとの公式やり取り・ATS 通知（HERP・HRMOS・Talentio 等）** |
