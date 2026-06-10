@@ -171,7 +171,9 @@ ToDo・タスクは **Notion ToDo DB**（`collection://2257d017-b6a0-8026-867c-0
 **Claude の振る舞い：**
 
 - Craft md テンプレに ToDo セクションを書かない（`agents/client-profile.md` / `agents/candidate-profile.md` のテンプレからも除去済）
-- 「○○ の ToDo は？」と聞かれたら Notion ToDo DB を `mcp__notion-search` または `mcp__notion-fetch` で query（relation で絞り込み）
+- **残タスク・やること・「今日のToDo」一覧は、必ず `tools/notion_active_todos.py` で取得する（ステータス≠完了で絞った正本）。** `notion-search`（件名のセマンティック検索）で ToDo を列挙してはならない——ステータスが見えず**完了済みが混ざり、完了タスクを残タスクとして誤提示する事故**が起きる（2026-06 発生・再発防止）。
+  - 朝の業務一覧／「今日やること」は `python3 tools/notion_active_todos.py --category "Pole&Line"`。いま動いているものは `--status "進行中"`、次の一手は `--task-type "NextAction 🚀"`、再加工用は `--json`。
+  - `notion-search` は「特定の1件を文脈（候補者・クライアント名）から探す」用途に限る。見つけた個票は提示前に必ず `notion-fetch` で**ステータスを確認し、完了なら残タスクとして出さない**。
 - 新規 ToDo を起こす際は `mcp__notion-create-pages` で ToDo DB に **`Inbox 📨`** として追加し、結果を口頭で報告
 - 「Inbox を振り分けて」と依頼されたら、`TaskType = "Inbox 📨"` の ToDo を query → 内容を読み取り、推奨 TaskType を提案 → ユーザー確認後 or 自走で `notion-update-page` で更新
 
@@ -264,5 +266,5 @@ git push origin main
 
 **日次のタスク運用（参考）：**
 
-- 朝は新セッションで開始し、「今日のタスクを Notion ToDo と前日の業務ログから優先度順にリストして」から始めるのが軽い（読み込みは ToDo DB ＋業務ログ1枚で済む）。
+- 朝は新セッションで開始し、「今日のタスクを Notion ToDo と前日の業務ログから優先度順にリストして」から始めるのが軽い（読み込みは ToDo DB ＋業務ログ1枚で済む）。ToDo の取得は §10 のとおり `tools/notion_active_todos.py --category "Pole&Line"`（ステータス≠完了の正本）を使い、件名検索で完了済みを混ぜないこと。
 - 実タスクの正本は Notion ToDo DB（§10）。日次の俯瞰・サマリーは Craft `15_DailyLog｜業務ログ` に1日1枚残す。

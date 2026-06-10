@@ -1,3 +1,36 @@
+# tools/ ユーティリティ
+
+このディレクトリには、Claude のコンテキストを節約しつつ正本データを直接 API から
+取得・更新するためのスクリプトを置く。
+
+## ToDo の未完一覧（残タスクの正本取得）｜`notion_active_todos.py`
+
+**残タスク・やることの確認は、必ずこのスクリプトを使う。** `notion-search`（件名の
+セマンティック検索）で ToDo を拾うと**ステータスが見えず完了済みが混ざり**、完了タスクを
+「残タスク」として誤提示する事故が起きる（2026-06 発生）。本スクリプトは Notion API を
+**ステータス≠完了でフィルタ**して、本当に未完のものだけを決定的に返す。
+
+```bash
+# 未完すべて（Category混在。Private・マンション理事会等も含む）
+python3 tools/notion_active_todos.py
+
+# 朝の業務一覧（P&L 案件のみ・推奨）
+python3 tools/notion_active_todos.py --category "Pole&Line"
+
+# いま動いているものだけ
+python3 tools/notion_active_todos.py --status "進行中"
+
+# 次の一手だけ / Claude が再加工する用の生JSON
+python3 tools/notion_active_todos.py --task-type "NextAction 🚀"
+python3 tools/notion_active_todos.py --category "Pole&Line" --json
+```
+
+- 出力は TaskType ごとにグルーピングし `[優先度][ステータス] タイトル / 開始日 / URL`。本文ブロックは取らない（軽量）。
+- ToDo DB の `database_id` と `data source(collection) ID` は別物。本スクリプトは REST query 用に `database_id` を内蔵済み。
+- Waiting（相手ボール）も「未完」なので既定で含む。NextAction と区別したいときは TaskType で見る。
+
+---
+
 # 音声文字起こし → 議事録 パイプライン（Gemini 連携）
 
 Notion に保存された録音（ogg 等）を Gemini で文字起こしし、全文を **Notion ＋ Google
