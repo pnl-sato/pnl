@@ -74,6 +74,7 @@ Mobile：080-3930-1714
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
 - **Craft に書き込み・編集する場合（候補者プロファイル・クライアントmd・ポジションmd 等、`craft_write` を使う全タスク）** → `agents/craft-writing.md` を読む（改行・bullet 表示の落とし穴と確実に動く構文）
 - **音声・録音の文字起こし／議事録作成を行う場合（Notion `AppSoundcore` 等の ogg、面談・打ち合わせ録音）** → `agents/transcription.md` を読む（Gemini 連携パイプライン。`tools/` のスクリプトで取得→文字起こし→Notion追記＋Googleドキュメント保存→議事録同期まで、音声/全文をコンテキストに通さず実行）
+- **朝のその日の ToDo を生成する場合（注力ポジションのスカウト送信ノルマ＝今日の通数も算出して含める）** → `agents/daily-todo.md` を読む
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 
 ## 6. 動作の原則
@@ -260,5 +261,5 @@ git push origin main
 
 **日次のタスク運用（参考）：**
 
-- 朝は新セッションで開始し、「今日のタスクを Notion ToDo と前日の業務ログから優先度順にリストして」から始めるのが軽い（読み込みは ToDo DB ＋業務ログ1枚で済む）。
+- 朝は新セッションで開始し、「今日のタスクを Notion ToDo と前日の業務ログから優先度順にリストして」から始めるのが軽い（読み込みは ToDo DB ＋業務ログ1枚で済む）。**朝のTODO生成の詳細手順（注力ポジションのスカウト送信ノルマ＝今日の通数の算出を含む）は `agents/daily-todo.md` に従う。**
 - 実タスクの正本は Notion ToDo DB（§10）。日次の俯瞰・サマリーは Craft `15_DailyLog｜業務ログ` に1日1枚残す。
