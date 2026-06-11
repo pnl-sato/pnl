@@ -2,15 +2,18 @@ name: Cleanup merged branches
 
 # main にマージ済みの claude/* リモートブランチを定期削除して、
 # セッションブランチの溜まりすぎ（墓場化）を防ぐ。
-# GitHub Actions はサーバー側で動き、GITHUB_TOKEN(contents: write) で
-# ブランチ削除が通るため、Web セッション特有の push 制限(403)を受けない。
 #
-# 安全設計（誤削除防止）:
-#  - "マージ済み" は `git branch --merged` に頼らず、ahead==0（mainに無いコミットが0本）
-#    かつ is-ancestor を満たすものだけに限定する（ランナーの commit-graph 誤判定対策）。
-#  - commit-graph を無効化し、全ブランチの完全な履歴を取得してから判定する。
-#  - 直近 STALE_DAYS 日以内に更新のあるブランチ（作業中の可能性）は残す。
-#  - 想定を超える本数を消そうとしたら MAX_DELETE で中断する（暴走ガード）。
+# 重要：マージ判定はランナー上のローカル git を使わない。
+#   検証の結果、actions/checkout 環境のローカル git は同じ SHA でも到達性を
+#   誤判定し（未マージ枝を ahead=0 と誤る）、未マージ作業を削除する事故につながる。
+#   そこで列挙・マージ判定・削除をすべて GitHub REST API 経由で行い、
+#   到達性は compare API（サーバ側の正しい計算）の ahead_by==0 だけを「マージ済み」とする。
+#
+# 安全弁：
+#   - ahead_by==0（main に無いコミットが0本）のものだけ削除対象。
+#   - 直近 STALE_DAYS 日以内に更新のあるブランチ（作業中の可能性）は残す。
+#   - 候補数が MAX_DELETE を超えたら中断（暴走ガード）。
+#   - dry_run=true で削除せず対象一覧だけ出す。
 
 on:
   schedule:
@@ -42,59 +45,43 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Delete merged claude/* branches
+      - name: Delete merged claude/* branches (authoritative via GitHub API)
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           STALE_DAYS: ${{ github.event.inputs.stale_days || '3' }}
           MAX_DELETE: ${{ github.event.inputs.max_delete || '40' }}
         run: |
           set -euo pipefail
 
-          # commit-graph の世代番号バグによる到達性の誤判定を避けるため無効化する
-          git config --global core.commitGraph false
-          git config --global fetch.writeCommitGraph false
-
-          # 全ブランチの完全な履歴を取得（浅い/部分クローンを排除して判定を正確に）
-          git fetch --prune --no-auto-gc origin '+refs/heads/*:refs/remotes/origin/*'
-
-          main_sha=$(git rev-parse origin/main)
-          echo "origin/main = ${main_sha}"
-          echo "DRY_RUN=${DRY_RUN} STALE_DAYS=${STALE_DAYS} MAX_DELETE=${MAX_DELETE}"
+          now=$(date -u +%s)
+          cutoff=$(( STALE_DAYS * 24 * 3600 ))
+          echo "DRY_RUN=${DRY_RUN} STALE_DAYS=${STALE_DAYS} MAX_DELETE=${MAX_DELETE} now=${now}"
           echo "==============================="
 
-          now=$(date +%s)
-          cutoff=$(( STALE_DAYS * 24 * 3600 ))
+          # claude/* ブランチを API から列挙（ローカル git の到達性は信用しない）
+          mapfile -t branches < <(gh api --paginate "repos/${REPO}/branches" --jq '.[].name' | grep '^claude/' || true)
+          echo "claude/* branches found: ${#branches[@]}"
+
           skipped_recent=0
           skipped_unmerged=0
           to_delete=()
 
-          while read -r ref; do
-            br=${ref#refs/remotes/origin/}
-            case "$br" in
-              main|HEAD|"") continue ;;
-            esac
+          for br in "${branches[@]:-}"; do
+            [ -z "$br" ] && continue
 
-            # 厳密判定その1：main に無いコミット数(ahead)。0 本＝main に完全に含まれている。
-            ahead=$(git rev-list --count "origin/main..${ref}")
-            if [ "$ahead" -ne 0 ]; then
+            # マージ判定：compare API の ahead_by（main に無いコミット数）。0 本＝完全にマージ済み。
+            ahead=$(gh api "repos/${REPO}/compare/main...${br}" --jq '.ahead_by')
+            if [ "$ahead" != "0" ]; then
               echo "skip (NOT merged, ahead=${ahead}): ${br}"
               skipped_unmerged=$((skipped_unmerged + 1))
               continue
             fi
 
-            # 厳密判定その2：二重確認（ブランチ tip が main の祖先であること）
-            if ! git merge-base --is-ancestor "$ref" origin/main; then
-              echo "skip (ancestor double-check failed): ${br}"
-              skipped_unmerged=$((skipped_unmerged + 1))
-              continue
-            fi
-
-            # 安全弁：直近 STALE_DAYS 日以内に更新があるブランチは（作業中の可能性）残す
-            ts=$(git log -1 --format=%ct "$ref")
+            # 安全弁：直近 STALE_DAYS 日以内に更新があるブランチは残す
+            cdate=$(gh api "repos/${REPO}/commits/${br}" --jq '.commit.committer.date')
+            ts=$(date -u -d "${cdate}" +%s)
             age=$(( now - ts ))
             if [ "$age" -lt "$cutoff" ]; then
               echo "skip (updated < ${STALE_DAYS}d): ${br}"
@@ -103,7 +90,7 @@ jobs:
             fi
 
             to_delete+=("$br")
-          done < <(git for-each-ref --format='%(refname)' refs/remotes/origin/claude/)
+          done
 
           count=${#to_delete[@]}
           echo "==============================="
@@ -112,24 +99,23 @@ jobs:
             printf '  - %s\n' "${to_delete[@]}"
           fi
 
-          # 暴走ガード：想定外に大量削除しようとしたら中断する
+          # 暴走ガード：想定外に大量削除しようとしたら中断
           if [ "$count" -gt "$MAX_DELETE" ]; then
             echo "ABORT: candidates ${count} exceed MAX_DELETE=${MAX_DELETE}. Aborting for safety."
             exit 1
           fi
 
           deleted=0
-          if [ "$count" -gt 0 ]; then
-            for br in "${to_delete[@]}"; do
-              if [ "$DRY_RUN" = "true" ]; then
-                echo "would delete: ${br}"
-              else
-                echo "deleting: ${br}"
-                git push origin --delete "$br"
-                deleted=$((deleted + 1))
-              fi
-            done
-          fi
+          for br in "${to_delete[@]:-}"; do
+            [ -z "$br" ] && continue
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "would delete: ${br}"
+            else
+              echo "deleting: ${br}"
+              gh api -X DELETE "repos/${REPO}/git/refs/heads/${br}"
+              deleted=$((deleted + 1))
+            fi
+          done
 
           echo "==============================="
           echo "done. dry_run=${DRY_RUN} deleted=${deleted} candidates=${count} skipped_recent=${skipped_recent} skipped_unmerged=${skipped_unmerged}"
