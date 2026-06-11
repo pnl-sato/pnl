@@ -1,0 +1,19 @@
+# tools/mac/ の Mac ローカルツール用 Python 依存
+# セットアップ:
+#   python3 -m venv venv && source venv/bin/activate
+#   pip install -r tools/mac/requirements.txt
+#   別途 Homebrew: brew install ffmpeg fswatch
+
+# video_processor.py（動画→mp4/m4a→YouTube/Gemini文字起こし）
+python-dotenv>=1.0.0
+google-genai>=1.0.0
+google-api-python-client>=2.120.0
+google-auth-oauthlib>=1.2.0
+watchdog>=4.0.0
+python-docx>=1.0.0
+weasyprint>=61.0
+
+# convert_ogg.py（OGG→MP3/M4A、要 ffmpeg）
+pydub>=0.25.1
+
+# fix_mono_audio.py は標準ライブラリのみ（追加依存なし）

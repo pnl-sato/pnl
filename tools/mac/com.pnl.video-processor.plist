@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ⚠ パスはこの Mac に合わせて調整すること:
+     ProgramArguments とログのパスを、このマシンのリポジトリ位置（例 /Users/<user>/pnl）に書き換える。
+     スクリプトは scripts/ から tools/mac/ へ移設済み。
+     ~/Library/LaunchAgents/com.pnl.video-processor.plist に置いて `launchctl load` で常駐化。 -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pnl.video-processor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/satouyuuta/pnl/tools/mac/start_video_processor.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/satouyuuta/pnl/video_processor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/satouyuuta/pnl/video_processor.log</string>
+</dict>
+</plist>

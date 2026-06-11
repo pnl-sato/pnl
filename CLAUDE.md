@@ -76,6 +76,7 @@ Mobile：080-3930-1714
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
 - **Craft に書き込み・編集する場合（候補者プロファイル・クライアントmd・ポジションmd 等、`craft_write` を使う全タスク）** → `agents/craft-writing.md` を読む（改行・bullet 表示の落とし穴と確実に動く構文）
 - **音声・録音の文字起こし／議事録作成を行う場合（Notion `AppSoundcore` 等の ogg、面談・打ち合わせ録音）** → `agents/transcription.md` を読む（Gemini 連携パイプライン。`tools/` のスクリプトで取得→文字起こし→Notion追記＋Googleドキュメント保存→議事録同期まで、音声/全文をコンテキストに通さず実行）
+- **Mac ローカルの音声・動画変換／録画処理ツール（OGG→MP3 自動変換・動画→文字起こし常駐・mono 補正）を使う・修正する場合** → `tools/mac/README.md` を読む（佐藤の Mac mini／MacBook で動かすローカルスクリプト群。**実行は各 Mac 上の VSCode/CLI 版 Claude Code 限定**、Web 版は読取・編集のみ。サーバ側の文字起こしパイプラインは `agents/transcription.md`／`tools/` が正本で役割が別）
 - **朝のその日の ToDo を生成する場合（注力ポジションのスカウト送信ノルマ＝今日の通数も算出して含める）** → `agents/daily-todo.md` を読む
 - **Notion を読み書きする場合** → `notion_structure.md` を読む
 - **Salesforce（CRM）を読み込む場合（候補者・企業・案件・パイプライン）** → `agents/salesforce.md` を読む（オブジェクト別の既定項目セットで取得し、面談メモ・サマリー等の長文は要求時のみ追加。全項目取得は禁止）

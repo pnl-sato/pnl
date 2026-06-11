@@ -118,3 +118,12 @@ python3 tools/gdoc_upload.py /tmp/transcript.txt "2026-05-31 文字起こし"
 
 > 注: ③ の「テキストを入力に議事録生成」は現状 `gemini_transcribe.py` が音声入力前提
 > のため、テキスト入力対応の薄いラッパ追加が必要（次段で実装予定）。
+
+---
+
+# Mac ローカル・ツール群｜`tools/mac/`
+
+佐藤の **Mac（mini／MacBook）でローカル実行する**変換・録画処理スクリプト一式（OGG→MP3 自動変換、BlackHole 録画の動画処理＋文字起こし常駐、mono 音声補正、面談種別のプロンプト雛形）。**詳細・セットアップ・マシン固有の調整は `tools/mac/README.md` を参照。**
+
+- 上の文字起こしパイプライン（`tools/` 直下）は**サーバ側**で Web/ローカル問わず動くのに対し、`tools/mac/` は **macOS 依存（ffmpeg・AppleScript・launchd・ローカルフォルダ監視）でそのMac上でしか動かない**。役割が別。
+- そのため**実行できるのは各 Mac 上の VSCode/CLI 版 Claude Code のみ**。Web 版（クラウド）は読取・編集はできても実行不可。2台の Mac は `main` を pull すれば同じ最新版を共有できる。

@@ -4,4 +4,9 @@ logs/
 __pycache__/
 *.pyc
 .venv/
+venv/
 candidates/
+*.log
+.DS_Store
+node_modules/
+tools/mac/.env
