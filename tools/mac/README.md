@@ -9,6 +9,7 @@
 | スクリプト | 役割 | 実行 | 主依存 |
 |---|---|---|---|
 | `video_processor.py` | BlackHole録画(.mov)を監視→ffmpegでmp4/m4a→YouTubeアップロード＋Gemini文字起こしを並列実行。常駐運用可 | `python3 tools/mac/video_processor.py watch ~/Movies/Recordings` | ffmpeg, google-genai, YouTube API |
+| `process_now.sh` | 単発で手動処理するラッパー（Finder クイックアクション「動画処理」用）。iCloud dataless の実体化待ち付き。パスはスクリプト位置から自動解決（両Mac共通） | Finder で選択→クイックアクション、または `tools/mac/process_now.sh <file>` | zsh, ffmpeg |
 | `com.pnl.video-processor.plist` / `start_video_processor.sh` | 上を **launchd で常駐**（ログイン時自動起動）するための定義と起動ラッパー | `~/Library/LaunchAgents/` に置いて `launchctl load` | launchd |
 | `convert_ogg.py` | OGG→MP3/M4A 変換（NotebookLM取り込み用） | `python3 tools/mac/convert_ogg.py input.ogg [-f m4a] [-o out/]` | pydub, ffmpeg |
 | `mac_ogg_watcher.sh` / `setup_mac_auto_convert.sh` | ダウンロードフォルダを監視し OGG を自動 MP3 変換（launchd常駐をセットアップ） | `bash tools/mac/setup_mac_auto_convert.sh` | fswatch, ffmpeg |

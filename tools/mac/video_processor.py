@@ -114,6 +114,15 @@ MINUTES_PROMPT_DIR = os.getenv("MINUTES_PROMPT_DIR", "")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
 NOTION_MEMO_DB_ID = os.getenv("NOTION_MEMO_DB_ID", "")
 
+# P&L 担当者名（文字起こしの話者ラベルに使用）
+# .env に PNL_INTERVIEWER_NAME=佐藤 のように設定する
+PNL_INTERVIEWER_NAME = os.getenv("PNL_INTERVIEWER_NAME", "")
+
+# Google Drive 連携（文字起こしを Google Doc としてアップロード）
+# 未設定の場合は .txt のみ保存
+DRIVE_TOKEN_FILE = os.getenv("DRIVE_TOKEN_FILE", "~/.drive_token.json")
+DRIVE_TRANSCRIPT_FOLDER_ID = os.getenv("DRIVE_TRANSCRIPT_FOLDER_ID", "")
+
 
 # ─── ffmpeg 処理 ──────────────────────────────────────────────────────────────
 
@@ -224,7 +233,7 @@ def upload_to_youtube(video_path: Path, title: str, description: str = "") -> st
     動画ファイルを YouTube にアップロードし、動画 ID を返す。
 
     元の .mov をそのままアップロードすることで再エンコードによる画質劣化を防ぐ。
-    YouTube 側でトランスコードするため、投影資料のスクショ確認にも耐える品質を保てる。
+    Broken pipe 等の一時障害は指数バックオフで最大10回リトライする。
 
     Returns:
         YouTube 動画 ID（例: "dQw4w9WgXcQ"）
@@ -252,11 +261,21 @@ def upload_to_youtube(video_path: Path, title: str, description: str = "") -> st
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
+    consecutive_errors = 0
     while response is None:
-        status, response = request.next_chunk()
-        if status:
-            pct = int(status.progress() * 100)
-            log.info("アップロード進捗: %d%%", pct)
+        try:
+            status, response = request.next_chunk()
+            consecutive_errors = 0
+            if status:
+                pct = int(status.progress() * 100)
+                log.info("アップロード進捗: %d%%", pct)
+        except Exception as e:
+            consecutive_errors += 1
+            if consecutive_errors > 10:
+                raise
+            wait = min(2 ** consecutive_errors, 60)
+            log.warning("アップロード一時エラー（%d回目）: %s → %d秒後リトライ", consecutive_errors, e, wait)
+            time.sleep(wait)
 
     video_id = response["id"]
     log.info("YouTube アップロード完了: https://youtu.be/%s", video_id)
@@ -278,19 +297,27 @@ def _save_processed(data: dict) -> None:
 
 
 def is_processed(mov_path: Path) -> bool:
-    return str(mov_path.resolve()) in _load_processed()
+    entry = _load_processed().get(str(mov_path.resolve()))
+    if entry is None:
+        return False
+    # 旧フォーマット（mp4_done フィールドなし）は完了済みとして扱う
+    if "mp4_done" not in entry:
+        return True
+    return entry.get("completed_at") is not None
 
 
-def mark_processed(
-    mov_path: Path, youtube_id: str, m4a_path: Path, transcript_path: Path | None
-) -> None:
+def _load_state(mov_path: Path) -> dict | None:
+    """ファイルの処理状態を返す。未記録・旧フォーマットの場合は None。"""
+    entry = _load_processed().get(str(mov_path.resolve()))
+    if entry is None or "mp4_done" not in entry:
+        return None
+    return entry
+
+
+def _save_state(mov_path: Path, state: dict) -> None:
+    """処理状態をファイルに保存する。"""
     data = _load_processed()
-    data[str(mov_path.resolve())] = {
-        "processed_at": datetime.now().isoformat(),
-        "youtube_id": youtube_id,
-        "m4a_path": str(m4a_path),
-        "transcript_path": str(transcript_path) if transcript_path else "",
-    }
+    data[str(mov_path.resolve())] = state
     _save_processed(data)
 
 
@@ -380,10 +407,106 @@ def _load_minutes_prompt(category_name: str | None) -> str | None:
     return None
 
 
+_CHUNK_DURATION_SEC = 20 * 60  # 20分ごとにチャンク分割
+
+_AUDIO_MIME_BY_EXT: dict[str, str] = {
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".webm": "audio/webm",
+}
+
+# 監視・処理対象の拡張子（動画 + 音声）
+_WATCHED_SUFFIXES: frozenset[str] = frozenset({".mov", ".mp3", ".m4a", ".wav", ".ogg", ".flac"})
+
+# 音声のみのファイル（ffmpeg変換・YouTubeアップロードをスキップ）
+_AUDIO_ONLY_SUFFIXES: frozenset[str] = _WATCHED_SUFFIXES - {".mov"}
+
+
+def _get_audio_duration(path: Path) -> float:
+    """ffprobeで音声の長さ（秒）を返す。失敗時は0。"""
+    ffprobe = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
+    try:
+        result = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def _split_audio_chunks(path: Path, chunk_sec: int) -> list[Path]:
+    """音声ファイルをchunk_sec秒ごとにチャンク分割し、パスのリストを返す。"""
+    ffmpeg_bin = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+    tmp_dir = path.parent / f"_chunks_{path.stem}"
+    tmp_dir.mkdir(exist_ok=True)
+    out_pattern = str(tmp_dir / f"chunk_%03d{path.suffix}")
+    subprocess.run(
+        [ffmpeg_bin, "-y", "-i", str(path),
+         "-f", "segment", "-segment_time", str(chunk_sec),
+         "-c", "copy", "-reset_timestamps", "1", out_pattern],
+        check=True, capture_output=True,
+    )
+    chunks = sorted(tmp_dir.glob(f"chunk_*{path.suffix}"))
+    log.info("チャンク分割完了: %d チャンク", len(chunks))
+    return chunks
+
+
+def _transcribe_chunk(chunk_path: Path, client, types, prompt: str, audio_mime: str, max_retries: int = 5) -> str:
+    """1チャンクをGeminiにアップロードして文字起こし結果を返す。失敗時は新セッションでリトライ。"""
+    last_exc: Exception = RuntimeError("unknown")
+    for attempt in range(1, max_retries + 1):
+        if attempt > 1:
+            wait = min(2 ** attempt, 60)
+            log.warning("チャンクリトライ %d/%d: %d秒後", attempt, max_retries, wait)
+            time.sleep(wait)
+        try:
+            log.info("チャンクアップロード: %s (試行 %d)", chunk_path.name, attempt)
+            with open(chunk_path, "rb") as f:
+                audio_file = client.files.upload(
+                    file=f,
+                    config=types.UploadFileConfig(mime_type=audio_mime),
+                )
+            while audio_file.state.name == "PROCESSING":
+                time.sleep(5)
+                audio_file = client.files.get(name=audio_file.name)
+            if audio_file.state.name != "ACTIVE":
+                raise RuntimeError(f"Gemini チャンク処理失敗: {audio_file.state.name}")
+
+            response, _ = _generate_with_fallback(
+                client, GEMINI_MODEL,
+                contents=[types.Content(parts=[
+                    types.Part(file_data=types.FileData(file_uri=audio_file.uri, mime_type=audio_mime)),
+                    types.Part(text=prompt),
+                ])],
+            )
+            try:
+                client.files.delete(name=audio_file.name)
+            except Exception:
+                pass
+            return _strip_cjk_inner_spaces(response.text.strip())
+        except Exception as e:
+            last_exc = e
+            log.warning("チャンクアップロード失敗: %s", e)
+    raise last_exc
+
+
+def _strip_cjk_inner_spaces(text: str) -> str:
+    """CJK文字間の不要な半角スペースを除去する（Gemini分かち書き対策）。"""
+    import re
+    return re.sub(r'(?<=[　-鿿＀-￯]) (?=[　-鿿＀-￯])', '', text)
+
+
 def generate_minutes_with_gemini(transcript_text: str, prompt: str) -> str:
     """文字起こしテキストからGeminiで議事録を生成する。"""
     from google import genai
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    from google.genai import types as _types
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options=_types.HttpOptions(timeout=300_000))
     full_prompt = f"{prompt}\n\n---\n\n{transcript_text}"
     response, _ = _generate_with_fallback(client, GEMINI_MODEL, contents=full_prompt)
     return response.text
@@ -510,47 +633,43 @@ def _generate_with_fallback(client, primary_model: str, **kwargs):
     raise last_exc
 
 
-def save_transcript_as_pdf(docx_path: Path) -> Path | None:
-    """DOCXファイルをWeasyPrintでPDFに変換する（サイレント・バックグラウンド動作）。"""
+def _build_drive_service():
+    """Google Drive APIサービスを構築する。認証情報がなければNoneを返す。"""
+    token_path = Path(DRIVE_TOKEN_FILE).expanduser()
+    if not token_path.exists():
+        return None
     try:
-        import html as html_module
-        import weasyprint
-        from docx import Document
-    except ImportError:
-        log.warning("PDF生成失敗: pip install weasyprint が必要です")
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+        creds = Credentials.from_authorized_user_file(str(token_path), ["https://www.googleapis.com/auth/drive.file"])
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            token_path.write_text(creds.to_json())
+        return build("drive", "v3", credentials=creds, cache_discovery=False)
+    except Exception as e:
+        log.warning("Google Drive サービス構築失敗: %s", e)
         return None
 
-    pdf_path = docx_path.with_suffix(".pdf")
+
+def upload_text_as_gdoc(service, title: str, html_bytes: bytes, folder_id: str = "") -> str | None:
+    """HTMLをGoogle Docとしてアップロードし、ドキュメントURLを返す。"""
     try:
-        doc = Document(str(docx_path))
-        lines = [p.text for p in doc.paragraphs]
-        body_html = "\n".join(
-            f"<p>{html_module.escape(line)}</p>" if line.strip() else "<p>&nbsp;</p>"
-            for line in lines
-        )
-        html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  @page {{ margin: 20mm; }}
-  body {{
-    font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
-    font-size: 10pt;
-    line-height: 1.7;
-  }}
-  p {{ margin: 0 0 3pt 0; }}
-</style>
-</head>
-<body>
-{body_html}
-</body>
-</html>"""
-        weasyprint.HTML(string=html_content).write_pdf(str(pdf_path))
-        log.info("PDF生成完了: %s", pdf_path.name)
-        return pdf_path
+        import io
+        from googleapiclient.http import MediaIoBaseUpload
+        metadata = {"name": title, "mimeType": "application/vnd.google-apps.document"}
+        if folder_id:
+            metadata["parents"] = [folder_id]
+        media = MediaIoBaseUpload(io.BytesIO(html_bytes), mimetype="text/html", resumable=False)
+        f = service.files().create(body=metadata, media_body=media, fields="id").execute()
+        doc_id = f.get("id")
+        url = f"https://docs.google.com/document/d/{doc_id}"
+        log.info("Google Doc 作成完了: %s", url)
+        if sys.platform == "darwin":
+            subprocess.run(["open", url], check=False)
+        return url
     except Exception as e:
-        log.warning("PDF生成失敗: %s", e)
+        log.warning("Google Doc アップロード失敗: %s", e)
         return None
 
 
@@ -575,7 +694,8 @@ def _load_transcript_prompt() -> str:
 
 
 def transcribe_with_gemini(
-    m4a_path: Path, out_dir: Path, prompt_override: str | None = None
+    m4a_path: Path, out_dir: Path, prompt_override: str | None = None,
+    category_name: str | None = None,
 ) -> Path:
     """
     Gemini API で m4a を文字起こしし、テキストファイルに保存する。
@@ -602,75 +722,76 @@ def transcribe_with_gemini(
             "pip install google-genai を実行してください。"
         )
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    docx_path = out_dir / f"文字起こし：{m4a_path.stem}.docx"
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=600_000))
+    txt_path = out_dir / f"文字起こし：{m4a_path.stem}.txt"
 
     log.info("Gemini 文字起こし開始: %s", m4a_path.name)
 
     # ファイルを Gemini File API にアップロード
     # Path オブジェクトを渡すと SDK がファイル名を内部で使い日本語エラーになるため
     # バイナリで開いて渡す
-    log.info("音声ファイルをアップロード中...")
-    with open(m4a_path, "rb") as f:
-        audio_file = client.files.upload(
-            file=f,
-            config=types.UploadFileConfig(mime_type="audio/mp4"),
-        )
+    audio_mime = _AUDIO_MIME_BY_EXT.get(m4a_path.suffix.lower(), "audio/mp4")
 
-    # 処理完了まで待機（通常数秒〜数十秒）
-    while audio_file.state.name == "PROCESSING":
-        log.info("Gemini がファイルを処理中...")
-        time.sleep(5)
-        audio_file = client.files.get(name=audio_file.name)
-
-    if audio_file.state.name != "ACTIVE":
-        raise RuntimeError(f"Gemini ファイル処理失敗: state={audio_file.state.name}")
-
-    # 文字起こし実行（選択プロンプト > TRANSCRIPT_PROMPT_FILE > デフォルト）
+    # 文字起こしプロンプトを構築
     prompt = prompt_override if prompt_override is not None else _load_transcript_prompt()
-    response, used_model = _generate_with_fallback(
-        client, GEMINI_MODEL,
-        contents=[
-            types.Content(parts=[
-                types.Part(file_data=types.FileData(
-                    file_uri=audio_file.uri, mime_type="audio/mp4"
-                )),
-                types.Part(text=prompt),
-            ])
-        ],
-    )
+    _CANDIDATE_CATEGORIES = {"候補者面談"}
+    _candidate_name = m4a_path.stem.split("-")[0].strip() if "-" in m4a_path.stem else ""
+    if (category_name in _CANDIDATE_CATEGORIES and _candidate_name and PNL_INTERVIEWER_NAME):
+        prompt = (
+            f"話者は2名います。"
+            f"P&L（エージェント）側の話者ラベルは「【P&L {PNL_INTERVIEWER_NAME}】」、"
+            f"候補者側の話者ラベルは「【{_candidate_name}】」としてください。\n\n"
+        ) + prompt
 
-    # アップロードしたファイルを削除（48時間で自動削除されるが明示的に削除）
+    # 長い音声はチャンク分割してアップロード
+    duration = _get_audio_duration(m4a_path)
+    chunks: list[Path] = []
+    chunk_results: list[str] = []
     try:
-        client.files.delete(name=audio_file.name)
-    except Exception:
-        pass
+        if duration > _CHUNK_DURATION_SEC:
+            log.info("音声が長いためチャンク分割します（%.0f分 → %d分×N）", duration / 60, _CHUNK_DURATION_SEC // 60)
+            chunks = _split_audio_chunks(m4a_path, _CHUNK_DURATION_SEC)
+        else:
+            chunks = [m4a_path]
 
-    transcript = response.text.strip()
+        for i, chunk in enumerate(chunks, 1):
+            log.info("文字起こし %d/%d: %s", i, len(chunks), chunk.name)
+            chunk_results.append(_transcribe_chunk(chunk, client, types, prompt, audio_mime))
+    finally:
+        # 一時チャンクディレクトリを削除
+        tmp_dir = m4a_path.parent / f"_chunks_{m4a_path.stem}"
+        if tmp_dir.exists():
+            import shutil as _shutil
+            _shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # ヘッダー行 + 文字起こし本文を DOCX として保存
-    try:
-        from docx import Document
-        from docx.shared import Pt
-    except ImportError:
-        raise ImportError("python-docx が未インストールです。pip install python-docx を実行してください。")
+    used_model = GEMINI_MODEL
+    transcript = "\n\n".join(chunk_results)
 
-    header_lines = [
+    # ヘッダー + 本文を .txt として保存
+    header = "\n".join([
         "# 文字起こし",
         f"# ファイル : {m4a_path.name}",
         f"# 作成日時 : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"# モデル  : {used_model}",
         "─" * 60,
         "",
-    ]
-    doc = Document()
-    doc.styles["Normal"].font.size = Pt(10)
-    for line in header_lines + transcript.splitlines():
-        doc.add_paragraph(line)
-    doc.save(str(docx_path))
-    log.info("文字起こし完了: %s", docx_path.name)
+    ])
+    txt_content = header + "\n" + transcript
+    txt_path.write_text(txt_content, encoding="utf-8")
+    log.info("文字起こし完了: %s", txt_path.name)
 
-    return docx_path
+    # Google Drive に HTML 形式でアップロード（任意）
+    drive_service = _build_drive_service()
+    if drive_service:
+        import html as _html
+        body_html = "\n".join(
+            f'<p style="margin:0">{_html.escape(line)}</p>' if line.strip() else '<p style="margin:0">&nbsp;</p>'
+            for line in txt_content.splitlines()
+        )
+        html_bytes = f'<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>{body_html}</body></html>'.encode("utf-8")
+        upload_text_as_gdoc(drive_service, txt_path.stem, html_bytes, DRIVE_TRANSCRIPT_FOLDER_ID)
+
+    return txt_path
 
 
 # ─── タイトル生成 ─────────────────────────────────────────────────────────────
@@ -697,12 +818,13 @@ def process_file(
     skip_transcribe: bool = False,
     prompt_override: str | None = None,
     minutes_prompt: str | None = None,
+    category_name: str | None = None,
 ) -> None:
     """
     1つの .mov ファイルを処理する。
 
-    変換完了後、YouTube アップロードと Gemini 文字起こしを順次実行する。
-    minutes_prompt が指定された場合、文字起こし後に議事録を生成してNotionに追記する。
+    各ステップ完了後に状態を保存するチェックポイント方式を採用。
+    ネットワーク遮断等で中断しても、次回起動時に未完了ステップから再開できる。
     """
     mov_path = mov_path.resolve()
 
@@ -720,41 +842,67 @@ def process_file(
         out_dir = mov_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. ffmpeg 変換（逐次：mp4 と m4a が揃ってから次へ）
-    mp4_path, m4a_path = convert_mov_to_mp4_and_m4a(mov_path, out_dir)
+    is_audio_only = mov_path.suffix.lower() in _AUDIO_ONLY_SUFFIXES
 
-    # 2. YouTube アップロード → Gemini 文字起こし（順次実行）
-    # 並列実行は requests ライブラリのデッドロックを引き起こす場合があるため順次に変更
-    youtube_id = ""
-    transcript_path: Path | None = None
+    # 既存の状態を読み込む（再開時）または初期状態を作成
+    state = _load_state(mov_path)
+    if state is None:
+        state = {
+            "started_at": datetime.now().isoformat(),
+            "completed_at": None,
+            "category_name": category_name,
+            "skip_youtube": skip_youtube or is_audio_only,
+            "skip_transcribe": skip_transcribe,
+            "mp4_path": "",
+            "mp4_done": is_audio_only,   # 音声ファイルはffmpeg不要
+            "m4a_path": str(mov_path) if is_audio_only else "",
+            "m4a_done": is_audio_only,
+            "youtube_id": "",
+            "youtube_done": is_audio_only,  # 音声ファイルはYouTube不要
+            "transcript_path": "",
+            "transcript_done": False,
+            "notion_done": False,
+        }
+        _save_state(mov_path, state)
+    else:
+        log.info("前回の続きから再開します: %s", mov_path.name)
+        is_audio_only = state.get("m4a_path") == str(mov_path)
 
-    if not skip_youtube:
-        title = build_youtube_title(mov_path)
+    # 状態から変数を復元
+    mp4_path = Path(state["mp4_path"]) if state.get("mp4_path") else None
+    m4a_path = Path(state["m4a_path"]) if state.get("m4a_path") else None
+    transcript_path = Path(state["transcript_path"]) if state.get("transcript_path") else None
+    youtube_id = state.get("youtube_id", "")
+
+    # 1. ffmpeg 変換（mp4 + m4a）
+    if not state.get("mp4_done") or not state.get("m4a_done"):
+        mp4_path, m4a_path = convert_mov_to_mp4_and_m4a(mov_path, out_dir)
+        state.update({
+            "mp4_path": str(mp4_path), "mp4_done": True,
+            "m4a_path": str(m4a_path), "m4a_done": True,
+        })
+        _save_state(mov_path, state)
+    else:
+        log.info("ffmpeg変換済みのためスキップ: %s", mov_path.stem)
+
+    # 2. Gemini 文字起こし
+    if not skip_transcribe and GEMINI_API_KEY and not state.get("transcript_done"):
         try:
-            youtube_id = upload_to_youtube(mov_path, title)
-        except FileNotFoundError as e:
-            log.warning("YouTube スキップ（認証ファイルなし）: %s", e)
-        except Exception as e:
-            log.error("YouTube アップロード失敗: %s", e)
-
-    pdf_path: Path | None = None
-    if not skip_transcribe and GEMINI_API_KEY:
-        try:
-            transcript_path = transcribe_with_gemini(m4a_path, out_dir, prompt_override=prompt_override)
-            if transcript_path:
-                pdf_path = save_transcript_as_pdf(transcript_path)
+            transcript_path = transcribe_with_gemini(m4a_path, out_dir, prompt_override=prompt_override, category_name=category_name)
+            state.update({"transcript_path": str(transcript_path), "transcript_done": True})
+            _save_state(mov_path, state)
         except Exception as e:
             log.error("文字起こし失敗: %s", e)
             _notify_macos("video_processor エラー", f"文字起こし失敗: {mov_path.name}")
+            # 失敗は記録しない → 次回再開時に再試行
     elif not skip_transcribe and not GEMINI_API_KEY:
         log.warning("GEMINI_API_KEY 未設定のため文字起こしをスキップします")
 
     # 3. Notion 議事録追記
-    if transcript_path and minutes_prompt and NOTION_TOKEN and NOTION_MEMO_DB_ID:
+    if (transcript_path and minutes_prompt and NOTION_TOKEN and NOTION_MEMO_DB_ID
+            and not state.get("notion_done")):
         try:
-            from docx import Document as _DocxDoc
-            _doc = _DocxDoc(str(transcript_path))
-            transcript_text = "\n".join(p.text for p in _doc.paragraphs)
+            transcript_text = transcript_path.read_text(encoding="utf-8")
             log.info("議事録を生成中...")
             minutes_text = generate_minutes_with_gemini(transcript_text, minutes_prompt)
             pdf_name = mov_path.stem
@@ -764,22 +912,58 @@ def process_file(
                 append_minutes_to_notion(page_id, minutes_text)
             else:
                 log.warning("Notionへの追記をスキップ（ページが見つかりません）")
+            state["notion_done"] = True
+            _save_state(mov_path, state)
         except Exception as e:
             log.error("Notion議事録追記失敗: %s", e)
+            # 失敗は記録しない → 次回再開時に再試行
 
-    # 4. 処理済み記録
-    mark_processed(mov_path, youtube_id, m4a_path, transcript_path)
+    # 4. YouTube アップロード（最後：ネットワーク遮断されても他のステップは完了済み）
+    if not skip_youtube and not state.get("youtube_done"):
+        title = build_youtube_title(mov_path)
+        try:
+            youtube_id = upload_to_youtube(mov_path, title)
+            state.update({"youtube_id": youtube_id, "youtube_done": True})
+            _save_state(mov_path, state)
+        except FileNotFoundError as e:
+            log.warning("YouTube スキップ（認証ファイルなし）: %s", e)
+            state["youtube_done"] = True
+            _save_state(mov_path, state)
+        except Exception as e:
+            log.error("YouTube アップロード失敗: %s", e)
+            # 失敗は記録しない → 次回再開時に再試行
 
-    # 4. 完了通知
+    # 全ステップ完了チェック
+    youtube_ok = skip_youtube or state.get("youtube_done", False)
+    transcript_ok = skip_transcribe or not GEMINI_API_KEY or state.get("transcript_done", False)
+    notion_ok = (
+        not minutes_prompt or not NOTION_TOKEN or not NOTION_MEMO_DB_ID
+        or state.get("notion_done", False)
+    )
+    all_done = (
+        state.get("mp4_done") and state.get("m4a_done")
+        and youtube_ok and transcript_ok and notion_ok
+    )
+
+    if not all_done:
+        log.warning("一部のステップが未完了です。次回起動時に自動再開します: %s", mov_path.name)
+        _notify_macos("動画処理: 一時中断", f"次回起動時に再開します: {mov_path.name}")
+        return
+
+    # 完了記録
+    state["completed_at"] = datetime.now().isoformat()
+    _save_state(mov_path, state)
+
+    # 完了サマリー表示
     print("\n" + "=" * 60)
     print("処理完了!")
     print(f"  元ファイル  : {mov_path}")
-    print(f"  mp4 (圧縮) : {mp4_path}")
-    print(f"  m4a (音声) : {m4a_path}")
+    if mp4_path:
+        print(f"  mp4 (圧縮) : {mp4_path}")
+    if m4a_path:
+        print(f"  m4a (音声) : {m4a_path}")
     if transcript_path:
         print(f"  文字起こし : {transcript_path}")
-    if pdf_path:
-        print(f"  PDF        : {pdf_path}")
     if youtube_id:
         print(f"  YouTube    : https://youtu.be/{youtube_id}")
     if not transcript_path:
@@ -820,8 +1004,19 @@ def watch_folder(
     detected_q: queue.Queue = queue.Queue()
     _pending: set = set()  # キューまたはダイアログ処理中のファイルを追跡（重複防止）
 
+    # 前回中断されたファイルを自動的にキューへ追加
+    for _f in sorted(
+        (p for s in _WATCHED_SUFFIXES for p in watch_dir.glob(f"*{s}")),
+        key=lambda p: p.stat().st_mtime,
+    ):
+        _s = _load_state(_f)
+        if _s is not None and _s.get("completed_at") is None:
+            log.info("前回中断されたファイルを再開キューに追加: %s", _f.name)
+            _pending.add(_f.resolve())
+            detected_q.put(_f)
+
     def _on_new_mov(path: Path) -> None:
-        """新規 .mov 検知時にキューへ追加（バックグラウンドスレッドから呼ぶ）。"""
+        """新規ファイル検知時にキューへ追加（バックグラウンドスレッドから呼ぶ）。"""
         resolved = path.resolve()
         _wait_until_stable(path)
         if not is_processed(path) and resolved not in _pending:
@@ -834,12 +1029,18 @@ def watch_folder(
         from watchdog.observers import Observer
 
         class MovHandler(FileSystemEventHandler):
-            def on_created(self, event):
-                if event.is_directory:
-                    return
-                p = Path(event.src_path)
-                if p.suffix.lower() == ".mov":
+            def _handle(self, path: str) -> None:
+                p = Path(path)
+                if p.suffix.lower() in _WATCHED_SUFFIXES:
                     threading.Thread(target=_on_new_mov, args=(p,), daemon=True).start()
+
+            def on_created(self, event):
+                if not event.is_directory:
+                    self._handle(event.src_path)
+
+            def on_moved(self, event):
+                if not event.is_directory:
+                    self._handle(event.dest_path)
 
         observer = Observer()
         observer.schedule(MovHandler(), str(watch_dir), recursive=False)
@@ -850,12 +1051,15 @@ def watch_folder(
         use_watchdog = False
 
     # ポーリングスレッド（watchdog がない場合のフォールバック）
+    def _glob_watched(d: Path) -> set:
+        return {p for s in _WATCHED_SUFFIXES for p in d.glob(f"*{s}")}
+
     if not use_watchdog:
         def _poll():
-            known = set(watch_dir.glob("*.mov"))
+            known = _glob_watched(watch_dir)
             while True:
                 try:
-                    current = set(watch_dir.glob("*.mov"))
+                    current = _glob_watched(watch_dir)
                     for p in (current - known):
                         _on_new_mov(p)
                     known = current
@@ -925,10 +1129,17 @@ def _notify_and_wait_for_rename(
             return
 
     # ダイアログ後にフォルダを再スキャン（リネーム済みのファイルを拾う）
-    pending = sorted(
-        [p for p in watch_dir.glob("*.mov") if not is_processed(p)],
-        key=lambda p: p.stat().st_mtime,
-    )
+    # リネーム直後はファイルシステムの反映に時間がかかる場合があるため最大5回リトライ
+    pending = []
+    for _retry in range(5):
+        pending = sorted(
+            [p for p in _glob_watched(watch_dir) if not is_processed(p)],
+            key=lambda p: p.stat().st_mtime,
+        )
+        if pending:
+            break
+        log.info("再スキャン中... (%d/5)", _retry + 1)
+        time.sleep(2)
 
     if not pending:
         log.info("処理対象のファイルが見つかりません。スキップします。")
@@ -961,10 +1172,21 @@ def _notify_and_wait_for_rename(
             except (ValueError, IndexError, KeyboardInterrupt):
                 return
 
-    # カテゴリ選択
+    # カテゴリ選択（再開時は保存済みカテゴリを使用してダイアログをスキップ）
     prompt_override = None
     minutes_prompt = None
-    if not skip_transcribe and GEMINI_API_KEY:
+    category_name = None
+    existing_state = _load_state(target)
+    if existing_state and existing_state.get("category_name"):
+        category_name = existing_state["category_name"]
+        log.info("前回のカテゴリで再開します: %s", category_name)
+        if not skip_transcribe and GEMINI_API_KEY:
+            if TRANSCRIPT_PROMPT_DIR:
+                p_file = Path(TRANSCRIPT_PROMPT_DIR).expanduser() / f"{category_name}.txt"
+                if p_file.exists():
+                    prompt_override = p_file.read_text(encoding="utf-8").strip()
+            minutes_prompt = _load_minutes_prompt(category_name)
+    elif not skip_transcribe and GEMINI_API_KEY:
         prompt_override, category_name = _select_transcript_prompt()
         minutes_prompt = _load_minutes_prompt(category_name)
 
@@ -975,6 +1197,7 @@ def _notify_and_wait_for_rename(
             skip_transcribe=skip_transcribe,
             prompt_override=prompt_override,
             minutes_prompt=minutes_prompt,
+            category_name=category_name,
         )
     except Exception as e:
         log.error("処理失敗 %s: %s", target.name, e)
@@ -1081,7 +1304,18 @@ def main():
     if args.command == "process":
         prompt_override = None
         minutes_prompt = None
-        if not args.no_transcribe and GEMINI_API_KEY:
+        category_name = None
+        existing_state = _load_state(args.mov_file.resolve())
+        if existing_state and existing_state.get("category_name"):
+            category_name = existing_state["category_name"]
+            log.info("前回のカテゴリで再開します: %s", category_name)
+            if not args.no_transcribe and GEMINI_API_KEY:
+                if TRANSCRIPT_PROMPT_DIR:
+                    p_file = Path(TRANSCRIPT_PROMPT_DIR).expanduser() / f"{category_name}.txt"
+                    if p_file.exists():
+                        prompt_override = p_file.read_text(encoding="utf-8").strip()
+                minutes_prompt = _load_minutes_prompt(category_name)
+        elif not args.no_transcribe and GEMINI_API_KEY:
             prompt_override, category_name = _select_transcript_prompt()
             minutes_prompt = _load_minutes_prompt(category_name)
         process_file(
@@ -1090,6 +1324,7 @@ def main():
             skip_transcribe=args.no_transcribe,
             prompt_override=prompt_override,
             minutes_prompt=minutes_prompt,
+            category_name=category_name,
         )
     elif args.command == "watch":
         watch_folder(
