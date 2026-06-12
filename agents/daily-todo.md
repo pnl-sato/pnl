@@ -8,7 +8,7 @@
 
 ## 1. 通常のToDoリスト化
 
-1. Notion ToDo DB を query（未完了・優先度順、`[佐藤]`/`[Claude]`、relation 文脈）。
+1. Notion ToDo DB を query（未完了・優先度順、`[佐藤]`/`[Claude]`、relation 文脈）。**取得は `python3 tools/notion_active_todos.py --work`**（私用カテゴリを除外する exclude 方式。`--category "Pole&Line"` の include 方式は Category 空欄の業務タスクを取りこぼすため使わない＝CLAUDE.md §10）。`[佐藤]`/`[Claude]` のプレフィックスやスカウト関連はフィルタしないので、両担当・空欄業務とも一覧に出る。
 2. 前日 DailyLog で積み残し・申し送りを拾う。
 3. 優先度順に提示（年内売上の刈り取り＝面談・買い込み・クロージングを上位に。スカウトは下記ノルマとして別立て）。
 
