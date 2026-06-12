@@ -156,6 +156,19 @@ blocks get <rootBlockId> --depth 5 --format markdown
 - **要約層（時々使う）** = 面談メモ要約・Gmail/Slack 要約 → **トグル**にし、各行に Notion/Drive の正本リンクを併記。概観は軽く、深掘りは名指し1コール。
 - **生データ層（稀に必要）** = 面談メモ逐語・過去のやり取りログ・DM 全文 → **Craft に複製せず Notion/Drive のポインタだけ**置く。逐語が要るときだけ `notion-fetch` 等で取得（書きゼロ・常に最新）。
 
+### 3-6. ドキュメントのタイトルをリネームする（★`documents rename` は無い／ルートブロックを `blocks update`）
+
+Craft MCP に **`documents rename` は存在しない**（`documents` サブコマンドは create / move / delete のみ）。タイトルを変えたいときは、**ドキュメントのルートブロック（rootBlockId）を `blocks update` で1行テキストに更新する**と、**タイトルだけが変わり本文（子ブロック）は全て保持される**（2026-06 実測）。
+
+```
+blocks update --id <rootBlockId> --markdown "新しいタイトル"
+```
+
+- `<rootBlockId>` は `documents list --folder <id>` が返す先頭の ID（URL の documentId とは別物）。
+- 戻り値の `after` で `type:"page"` の `title` が新タイトルになり、`markdown[]`（子ブロック）が元のまま並んでいることを確認する。
+- markdown は**必ず1行**で渡す（複数ブロックにしない）。`blocks update` は「block[0] がターゲットを置換、残りは後ろに挿入」なので、複数行だと本文先頭に余計なブロックが入る。
+- 別ドキュメント間は**並列実行 OK**。用途例：scout-kit 各ドキュメント名に `［ポジション名］` プレフィックスを付けて一覧での判別性を上げる（`agents/scout-kit.md` §6.1 の Claude.ai 命名規約と揃い、md エクスポート時のファイル名にもそのまま乗る）。
+
 ---
 
 ## 4. アンチパターン集
@@ -169,6 +182,7 @@ blocks get <rootBlockId> --depth 5 --format markdown
 | `blocks add --markdown $'- a\n- b'`（bash の `$'...'` 構文を使用） | `$` がリテラル化、`\n` も literal `\n` として保存 | **`$'...'` は使えない**（MCPは bash 経由でない）。`--markdown "..."` の値に直接実改行を含める（3-2b 参照） |
 | 書き込み後の確認をスキップ | 後で読みづらいと判明、再修正に時間 | 必ず `blocks get` で表示確認 |
 | `+ 親\n\n\t- 子` や `+ 親\n\n- 子` で一発ネストを狙う | 子がトグルの中に入らず、リテラル文字列／兄弟ブロックになる（2026-06 実測） | トグル枠を作ってから `blocks add --id <トグルID>` で子を入れる二段方式（3-5） |
+| ドキュメントのタイトルを変えようと `documents rename` を探す | そんなコマンドは無い（create/move/delete のみ） | ルートブロックを `blocks update --id <rootBlockId> --markdown "新タイトル"`（1行）で更新＝本文保持のままリネーム（3-6） |
 
 ---
 

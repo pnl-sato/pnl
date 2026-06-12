@@ -114,7 +114,7 @@ WHERE Contract_Status__c = '締結済み'
   - `株式会社メドレー`（区切りなし）→ `株式会社メドレー`（そのまま）
 - **作成直前の最終ガード：** 既存判定（判定1〜4、特に SF Account ID 照合）を通過していること。加えて `folders list` で `12_Client｜企業` 直下に**同一タイトルのフォルダ**が無いか確認し、あれば新規作成せず既存を正本にする。
 - **既存フォルダ（2026-06 以前に短縮名で作成済み。BuySell Technologies・ギフティ等）はこのルールの遡及対象外**＝リネームしない。**新規作成分からのみ適用**する。重複判定は SF Account ID 主キーなので、短縮名の既存と SF 名の新規が二重生成される心配はない（同一 Account ID は判定1でヒットしてスキップされる）。
-- 重複を見つけた場合の整理は MCP で完結できる：固有情報を正本へ統合 → 重複 doc は `documents delete --document <rootBlockId>`、空フォルダは `folders delete --folder <folderId>`（いずれも soft-delete、30日リカバリ可）。※doc タイトルのリネーム機能は MCP に無いため、タイトル不一致のみ残る場合は手動。
+- 重複を見つけた場合の整理は MCP で完結できる：固有情報を正本へ統合 → 重複 doc は `documents delete --document <rootBlockId>`、空フォルダは `folders delete --folder <folderId>`（いずれも soft-delete、30日リカバリ可）。※doc タイトルのリネームは `documents rename` こそ無いが、**ルートブロックを `blocks update` で1行更新するとタイトルだけ変更でき本文は保持される**（手順は `agents/craft-writing.md` §3-6）。
 
 ### 夜間 backfill 専用の追加チェック
 
