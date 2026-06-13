@@ -48,7 +48,7 @@ Territory__c, Position__c, ProposablePositionMulti__c,
 Source__c, reply__c, active__c, English__c, FinalEducationList__c,
 RemoteRequirement__c, SideWorkRequirement__c,
 LinkedIn__c, badalert__c, CarefulPerson__c,
-LastModifiedDate, Notion_Page_ID__c
+LastModifiedDate, Notion_Page_ID__c, Craft_Profile_URL_SY__c
 ```
 
 | API名 | 項目名 |
@@ -74,7 +74,8 @@ LastModifiedDate, Notion_Page_ID__c
 | LinkedIn__c | LinkedIn |
 | badalert__c / CarefulPerson__c | 要注意チェック・要注意人物 |
 | LastModifiedDate | 最終更新日（鮮度） |
-| Notion_Page_ID__c | Notion Page ID |
+| Notion_Page_ID__c | Notion Page ID（※別コンサルの Notion を指す場合あり。佐藤の突合には使わない） |
+| Craft_Profile_URL_SY__c | 佐藤の Craft プロファイルへのポインタ（非空＝作成済み。重複防止の主キー） |
 
 **既定から外す長文（要求時のみ追加）：** `InterviewMemo__c`（面談メモ）, `Summary__c`（候補者サマリー）,
 `memo__c`, `pros_cons__c`, `Tenshokujiku__c`（転職軸）, `Competitors__c`（他社選考状況）, `Description__c`。
@@ -85,7 +86,7 @@ LastModifiedDate, Notion_Page_ID__c
 
 ```
 Id, Name, furigana__c, NumberOfEmployees, Contract_Status__c,
-LastModifiedDate, Notion_Page_ID__c
+LastModifiedDate, Notion_Page_ID__c, Craft_Profile_URL_SY__c
 ```
 
 | API名 | 項目名 |
@@ -96,7 +97,8 @@ LastModifiedDate, Notion_Page_ID__c
 | NumberOfEmployees | 従業員数 |
 | Contract_Status__c | 契約状況 |
 | LastModifiedDate | 最終更新日（鮮度） |
-| Notion_Page_ID__c | Notion Page ID |
+| Notion_Page_ID__c | Notion Page ID（※別コンサルの Notion を指す場合あり。佐藤の突合には使わない） |
+| Craft_Profile_URL_SY__c | 佐藤の Craft プロファイルへのポインタ（非空＝作成済み。重複防止の主キー） |
 
 **既定から外す長文：** `Description`, `Invoice__c`, `contract_memo__c`, `contactmemo__c`,
 `Field3__c`, `Contract_Summary_Text__c`。

@@ -86,10 +86,16 @@ WHERE Contract_Status__c = '締結済み'
 
 ### 既存判定フロー（順に試行、いずれか1つでも該当すれば「作成済み」と確定）
 
-1. **SF Account ID 照合（最強・絶対条件）**
+0. **SF `Account.Craft_Profile_URL_SY__c` 照合（最強・決定論的・主キー）**
+   - このフィールドは「佐藤の Craft クライアントプロファイルへのポインタ（rootBlockId）」で、**作成済みなら必ず非空**（書き戻しは初回生成モード末尾）。
+   - 夜間 backfill は SF から対象を引く時点で `Craft_Profile_URL_SY__c = null` で除外する（routines.md Part 1）。個別タスクでも Account を引いたらまずこの項目を見て、**非空なら即「作成済み」と確定**し、格納された rootBlockId の doc を読み込みモードで開く。
+   - Craft 全文検索（手順1〜3）は意味検索寄りで ID 部分一致を取りこぼし重複生成を招くため、**決定論的なこの項目を主キーにし、1〜3 は SF を引けない／フィールドが空の移行期の保険**と位置づける。
+   - **移行期のバックフィル：** 手順0が空（既存プロファイルは導入前作成で当面 null）で、手順1〜3 のフォールバックで既存 doc がヒットしたら、その場で `Account.Craft_Profile_URL_SY__c` にヒット doc の rootBlockId を `salesforce_dml_records` で書き戻す。数晩で全締結済みクライアントに伝播して収束し、以降は手順0だけで決定論的に当たる。
+
+1. **SF Account ID 照合（フォールバック）**
    - Salesforce Account の Id（例：`0015h00000aCAqwAAG`）を取得
    - Craft 内を `mcp__craft__craft_read` の `search "Account {Id後ろ6文字}"` で grep（例：`search "Account aCAqwAAG"`）
-   - 既存クライアント md の冒頭にある `**Salesforce:** Account 0015h00000aCAqwAAG` 行に必ずヒットするので、ヒットがあれば即「作成済み」と判定して**スキップ**
+   - 既存クライアント md の冒頭にある `**Salesforce:** Account 0015h00000aCAqwAAG` 行にヒットすれば「作成済み」と判定して**スキップ**し、手順0のフィールドへ rootBlockId を書き戻す
 
 2. **Notion 企業 Page ID 照合**
    - SF Account に紐づく Notion Page URL（例：`notion.so/2ca7d017b6a08059a09cef70f1a64ec7`）を取得
@@ -103,9 +109,16 @@ WHERE Contract_Status__c = '締結済み'
 
 4. すべて不一致 → **本当に未作成**と確定して初回生成モードへ進む
 
+### 作成後の必須処理：SF へ作成済みマーカーを書き戻す（重複防止の主キー）
+
+クライアント md を新規作成したら（または移行期に既存 doc を当てたら）、**必ず `salesforce_dml_records` で当該 `Account.Craft_Profile_URL_SY__c` に、その doc の rootBlockId（または `craftdocs://open?blockId=...` ディープリンク）を update する。** これが判定0の主キーになり、次回以降の重複生成を構造的に防ぐ。
+
+- **公開共有リンク（`craft.do/s/...`）は保存しない。** リンクを知れば誰でも中身を開けてしまう。rootBlockId／ディープリンクなら佐藤の Craft スペース未参加者は開けず、プロファイル本文は守られる（SF に入るのは中身の開けないポインタだけ）。
+- このフィールドは佐藤専用（FLS はシステム管理者のみ）。SF 既存の `Notion_Page_ID__c` は別コンサルの Notion を指すため、佐藤の Craft 突合には使わない。
+
 ### 命名ルール（SF Account.Name 基準）★新規作成時は必須
 
-クライアント md／フォルダの命名は **SF Account.Name を基準にした決定論的ルール**で固定する（2026-06 佐藤指示）。短縮名（通称）を人／AI が作ると run ごとにブレ、過去の重複事故（2026-05 マネーフォワード／NTTデータ／三井住友カード等で「株式会社X」「X株式会社」と短縮名フォルダが二重生成）の原因になった。判断の入らない機械的ルールにすることでブレを根絶する。重複判定の主キーはあくまで **SF Account ID（判定1）** であり、タイトルは「正本（SF）一致＋決定論的であること」を満たせばよい。
+クライアント md／フォルダの命名は **SF Account.Name を基準にした決定論的ルール**で固定する（2026-06 佐藤指示）。短縮名（通称）を人／AI が作ると run ごとにブレ、過去の重複事故（2026-05 マネーフォワード／NTTデータ／三井住友カード等で「株式会社X」「X株式会社」と短縮名フォルダが二重生成）の原因になった。判断の入らない機械的ルールにすることでブレを根絶する。重複判定の主キーはあくまで **SF `Account.Craft_Profile_URL_SY__c`（判定0）＞ SF Account ID（判定1）** であり、タイトルは「正本（SF）一致＋決定論的であること」を満たせばよい。
 
 - **タイトル ＝ SF Account.Name から、最初の `/` または全角スペース（`　`）以降（別名・コード部分）だけを機械的に落とした文字列。** `株式会社`・`(株)`・`Inc.`・英語社名などは **落とさず SF のまま残す**。フォルダ名・doc タイトル・`{社名}.md` の3つをこの同一文字列で揃える。
   - `株式会社BuySell Technologies/ バイセルテクノロジーズ` → `株式会社BuySell Technologies`

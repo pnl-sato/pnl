@@ -197,3 +197,5 @@ SOQL は `SELECT *` を持たないので必ず項目を名指しする。既定
 1. **Account の二重利用：** 企業マスター（候補者の在籍企業 約14,000件）とクライアント（約170件）が同居。クライアントは必ず `Contract_Status__c = '締結済み'` で絞る（client-profile.md §2.4）。
 2. **candidate は SF パイプライン所有者で判定：** 佐藤担当は `matching__c.OwnerId = '0055h000004V2dtAAC'` が正本。Notion パイプライン DB は enrichment 併用に留め、対象集合は SF に交差させる。
 3. **横断キー：** `Notion_Page_ID__c`（Account/Contact/Opportunity/matching__c に存在）が Notion との突合キー。`matching__c` は `Contact__r` / `Opportunity__r` / `ApplyCompany__r` で関連オブジェクトを参照。
+   - **注意：** `Notion_Page_ID__c` は**別コンサルの Notion を指す**ことがあり、佐藤の Notion／Craft への突合キーとしては使えない（2026-06 佐藤確認）。
+4. **佐藤の Craft プロファイル突合キー（2026-06 追加）：** `Craft_Profile_URL_SY__c`（**Account・Contact** に新設、Text 255、FLS＝システム管理者のみ）。佐藤の業務エージェントが作成した Craft プロファイル（クライアント／候補者）への**ポインタ（rootBlockId／`craftdocs://` ディープリンク。公開共有リンクは入れない）**。**非空＝佐藤の Craft 作成済み**を意味する決定論的マーカーで、夜間 backfill（routines.md）の重複作成防止の**主キー**。`Notion_Page_ID__c`（他コンサル用）とは別管理。対象抽出は `... AND Craft_Profile_URL_SY__c = null`、作成後に rootBlockId を書き戻す（client-profile.md §2.5／candidate-profile.md §2.5・§5.2）。
