@@ -3,12 +3,12 @@
 
 設計（CLAUDE.md セッション「mac-mini-message-history」での決定）:
     常時起動の mac mini 上の Claude Code（VSCode/CLI）からローカル実行する前提。
-    Notion に「番号マスター（候補者の電話番号・Apple ID メール）」を持ち、それを
-    許可リストの正本にして、一致するハンドルとのやりとり「だけ」を chat.db から
-    抽出し、Notion の「メッセージ履歴 DB」に候補者 relation 付きで upsert する。
-    許可リストに無い番号（家族・私用）は構造上いっさい外に出ない（デフォルト拒否）。
-    こうして業務（候補者）の履歴だけが Notion に乗るので、Web/スマホ版 Claude Code
-    からも普段の Notion コネクタで読める。PII を最小化する狙い。
+    許可リストの正本は **本来の「候補者」DB（Notion）** とし、その候補者ページに登録された
+    携帯番号に一致するハンドルとのやりとり「だけ」を chat.db から抽出して、Notion の
+    「メッセージ履歴 DB」に **候補者ページへの relation 付き** で upsert する。許可リスト外の
+    番号（家族・私用）は構造上いっさい外に出ない（デフォルト拒否）。候補者ページから直接その人
+    との iMessage/SMS 履歴を辿れるようになり、Web/スマホ版 Claude Code からも普段の Notion
+    コネクタで読める。別建ての「番号マスター」は持たない（候補者情報の二重持ち・重複の温床になる）。
 
     - 読み取り専用に徹する（送信機能・書き込み機能は chat.db 側に一切持たせない）。
     - 標準ライブラリのみ（sqlite3 / urllib）。venv 不要、システム python3 で動く。
@@ -22,16 +22,16 @@
        システム設定 → プライバシーとセキュリティ → フルディスクアクセス に追加。
        これが無いと ~/Library/Messages/chat.db を開けない。
     2. SMS も取りたいなら iPhone の「設定 → メッセージ → テキストメッセージ転送」で mini をオン。
-    3. Notion のインテグレーションに、番号マスター DB とメッセージ履歴 DB の両方を共有する。
+    3. Notion のインテグレーションに、候補者 DB とメッセージ履歴 DB の両方を共有する。
 
-セットアップ（DB をまだ作っていない場合）:
-    # 置き場（親ページ）の page_id を渡すと、番号マスター DB とメッセージ履歴 DB を作る
-    NOTION_TOKEN=ntn_xxx python3 tools/mac/imessage_sync.py --setup --parent <page_id>
-    # → 出力された2つの database_id を tools/mac/.env の
-    #    IMESSAGE_ROSTER_DB_ID / IMESSAGE_MESSAGES_DB_ID に設定する
+セットアップ（メッセージ履歴 DB をまだ作っていない場合）:
+    # 親ページの page_id と候補者 DB の id を渡すと、候補者 DB に relation したメッセージ履歴 DB を作る
+    NOTION_TOKEN=ntn_xxx python3 tools/mac/imessage_sync.py --setup \
+        --parent <親ページの page_id> --candidate-db <候補者DBの id>
+    # → 出力された database_id を tools/mac/.env の IMESSAGE_MESSAGES_DB_ID に設定する
 
 日常運用:
-    # まず番号マスターに候補者を1行ずつ入れる（氏名・電話番号。複数番号はカンマ区切り、Apple ID メールも可）
+    # 候補者 DB の各候補者ページに「携帯番号」を入れておく（許可リストの正本。これが一致条件）
     # 取り込みの下見（Notion には書かない。誰の何件が引けるかだけ表示）
     python3 tools/mac/imessage_sync.py --dry-run
     # 本番（差分のみ Notion に upsert）
@@ -43,8 +43,11 @@
 
 環境変数（tools/mac/.env から自動読込）:
     NOTION_TOKEN              Notion インテグレーショントークン（必須）
-    IMESSAGE_ROSTER_DB_ID     番号マスター DB の database_id（必須・--setup で作る）
+    IMESSAGE_CANDIDATE_DB_ID  許可リストの正本＝候補者 DB の database_id（必須）
     IMESSAGE_MESSAGES_DB_ID   メッセージ履歴 DB の database_id（必須・--setup で作る）
+    IMESSAGE_NAME_PROP        候補者 DB の氏名プロパティ名（既定 名前 / title）
+    IMESSAGE_PHONE_PROP       候補者 DB の電話番号プロパティ名（既定 携帯番号 / phone_number）
+    IMESSAGE_EMAIL_PROP       任意。iMessage の Apple ID メールを持つプロパティ名（既定 空＝未使用）
     IMESSAGE_DB_PATH          chat.db のパス（既定 ~/Library/Messages/chat.db）
     IMESSAGE_WATERMARK_FILE   差分同期の基準を保存する JSON（既定 ~/.imessage_sync_watermark.json）
     IMESSAGE_LOOKBACK_DAYS    初回（watermark 無し）の取得上限日数（既定 90、0 で無制限）
@@ -129,16 +132,30 @@ def notion_query_all(db_id, payload=None):
     return rows
 
 
-def _plain(prop):
-    """title / rich_text プロパティを素のテキストにする。"""
+def _prop_value(prop):
+    """Notion プロパティを素のテキストにする（title / rich_text / phone_number / email /
+    url / formula(string) に対応）。許可リスト構築で型がまちまちなため吸収する。"""
+    if not prop:
+        return ""
+    t = prop.get("type")
+    if t in ("title", "rich_text"):
+        return "".join(x.get("plain_text", "") for x in prop.get(t, [])).strip()
+    if t == "phone_number":
+        return (prop.get("phone_number") or "").strip()
+    if t == "email":
+        return (prop.get("email") or "").strip()
+    if t == "url":
+        return (prop.get("url") or "").strip()
+    if t == "formula":
+        return (prop.get("formula", {}).get("string") or "").strip()
     arr = prop.get("title") or prop.get("rich_text") or []
-    return "".join(t.get("plain_text", "") for t in arr).strip()
+    return "".join(x.get("plain_text", "") for x in arr).strip()
 
 
 # ─────────────────────────────────────────── 電話番号の正規化 ───────────────
 
 def normalize_handle(raw):
-    """chat.db のハンドル / 番号マスターの値を突き合わせ用キーに正規化する。
+    """chat.db のハンドル / 候補者 DB の番号を突き合わせ用キーに正規化する。
 
     返り値: (e164_or_email, suffix9)
       - email（Apple ID）はそのまま小文字化して返す（suffix は None）
@@ -173,26 +190,27 @@ def normalize_handle(raw):
     return e164, suffix
 
 
-def build_allowlist(roster_db_id):
-    """番号マスター DB を読み、許可リストを作る。
+def build_allowlist(candidate_db_id):
+    """候補者 DB を読み、許可リストを作る。
 
     返り値:
       exact:  {e164_or_email: (page_id, name)}
       suffix: {末尾9桁: (page_id, name)}   ← フォールバック一致用
-    「氏名」=title、「電話番号」「AppleIDメール」=rich_text（カンマ/読点/改行区切りで複数可）。
-    「有効」checkbox が存在して False の行は除外する。
+    氏名=NAME_PROP（既定「名前」/title）、電話=PHONE_PROP（既定「携帯番号」/phone_number）。
+    EMAIL_PROP が設定されていれば Apple ID メールも許可リストに含める。電話/メールは
+    カンマ・読点・改行区切りで複数可。携帯番号が空の候補者は許可リストに寄与しない。
     """
+    name_prop = cfg("IMESSAGE_NAME_PROP", "名前")
+    phone_prop = cfg("IMESSAGE_PHONE_PROP", "携帯番号")
+    email_prop = cfg("IMESSAGE_EMAIL_PROP")  # 任意
     exact, suffix = {}, {}
-    for page in notion_query_all(roster_db_id):
+    for page in notion_query_all(candidate_db_id):
         props = page.get("properties", {})
         pid = page["id"]
-        name = _plain(props.get("氏名", {})) or "(無名)"
-        enabled_prop = props.get("有効")
-        if enabled_prop and enabled_prop.get("checkbox") is False:
-            continue
-        raw_vals = []
-        for col in ("電話番号", "AppleIDメール"):
-            raw_vals += re.split(r"[,、\n\r/;]+", _plain(props.get(col, {})))
+        name = _prop_value(props.get(name_prop, {})) or "(無名)"
+        raw_vals = re.split(r"[,、\n\r/;]+", _prop_value(props.get(phone_prop, {})))
+        if email_prop:
+            raw_vals += re.split(r"[,、\n\r/;]+", _prop_value(props.get(email_prop, {})))
         for rv in raw_vals:
             key, suf = normalize_handle(rv)
             if not key:
@@ -370,9 +388,8 @@ def guid_exists(messages_db_id, guid):
 
 
 def create_message_page(messages_db_id, msg):
-    label = msg["candidate_name"]
     props = {
-        "相手": {"title": [{"text": {"content": label}}]},
+        "相手": {"title": [{"text": {"content": msg["candidate_name"]}}]},
         "日時": {"date": {"start": msg["iso"]}} if msg["iso"] else {"date": None},
         "方向": {"select": {"name": msg["direction"]}},
         "サービス": {"select": {"name": msg["service"]}},
@@ -385,20 +402,10 @@ def create_message_page(messages_db_id, msg):
 
 # ─────────────────────────────────────────── --setup（DB 作成）─────────────
 
-def setup_databases(parent_page_id):
+def setup_messages_db(parent_page_id, candidate_db_id):
+    """候補者 DB に relation したメッセージ履歴 DB を1つ作る。"""
     parent_page_id = parent_page_id.replace("-", "")
-    roster = _notion_req("/databases", {
-        "parent": {"type": "page_id", "page_id": parent_page_id},
-        "title": [{"type": "text", "text": {"content": "メッセージ番号マスター｜候補者"}}],
-        "properties": {
-            "氏名": {"title": {}},
-            "電話番号": {"rich_text": {}},
-            "AppleIDメール": {"rich_text": {}},
-            "メモ": {"rich_text": {}},
-            "有効": {"checkbox": {}},
-        },
-    })
-    roster_id = roster["id"]
+    candidate_db_id = candidate_db_id.replace("-", "")
     messages = _notion_req("/databases", {
         "parent": {"type": "page_id", "page_id": parent_page_id},
         "title": [{"type": "text", "text": {"content": "メッセージ履歴｜iMessage/SMS"}}],
@@ -411,13 +418,13 @@ def setup_databases(parent_page_id):
                 {"name": "iMessage", "color": "blue"}, {"name": "SMS", "color": "gray"}]}},
             "本文": {"rich_text": {}},
             "GUID": {"rich_text": {}},
-            "候補者": {"relation": {"database_id": roster_id, "single_property": {}}},
+            "候補者": {"relation": {"database_id": candidate_db_id, "single_property": {}}},
         },
     })
-    print("✓ DB を作成しました。tools/mac/.env に以下を設定してください：")
-    print(f"  IMESSAGE_ROSTER_DB_ID={roster_id.replace('-', '')}")
+    print("✓ メッセージ履歴 DB を作成しました。tools/mac/.env に以下を設定してください：")
     print(f"  IMESSAGE_MESSAGES_DB_ID={messages['id'].replace('-', '')}")
-    print("※ インテグレーションに両 DB が共有されているか確認してください。")
+    print(f"  IMESSAGE_CANDIDATE_DB_ID={candidate_db_id}")
+    print("※ インテグレーションに候補者 DB とこの DB が共有されているか確認してください。")
 
 
 # ─────────────────────────────────────────── --probe（番号調整用）──────────
@@ -430,10 +437,12 @@ def probe(conn, exact, suffix, limit=40):
         "JOIN handle h ON m.handle_id = h.ROWID "
         "GROUP BY h.id ORDER BY n DESC"
     ).fetchall()
-    print(f"chat.db のハンドル（上位{limit}件 / 全{len(rows)}件）  ✓=許可リスト一致")
+    print(f"chat.db のハンドル（上位{limit}件 / 全{len(rows)}件）  ✓=候補者DBの携帯番号と一致")
     for r in rows[:limit]:
-        mark = "✓" if match_handle(r["id"], exact, suffix) else " "
-        print(f"  [{mark}] {r['n']:>5}件  {r['id']}")
+        hit = match_handle(r["id"], exact, suffix)
+        mark = "✓" if hit else " "
+        who = f"  → {hit[1]}" if hit else ""
+        print(f"  [{mark}] {r['n']:>5}件  {r['id']}{who}")
     hit = sum(1 for r in rows if match_handle(r["id"], exact, suffix))
     print(f"一致ハンドル: {hit} / {len(rows)}")
 
@@ -448,21 +457,24 @@ def main():
     load_dotenv()
     args = sys.argv[1:]
 
+    candidate_db = cfg("IMESSAGE_CANDIDATE_DB_ID")
+
     if "--setup" in args:
         parent = _opt(args, "--parent") or cfg("IMESSAGE_SETUP_PARENT_PAGE_ID")
-        if not parent:
-            sys.exit("--setup には --parent <page_id>（DB を置く親ページ）が必要です。")
-        setup_databases(parent)
+        cand = _opt(args, "--candidate-db") or candidate_db
+        if not parent or not cand:
+            sys.exit("--setup には --parent <page_id> と --candidate-db <候補者DBの id>"
+                     "（または IMESSAGE_CANDIDATE_DB_ID）が必要です。")
+        setup_messages_db(parent, cand)
         return
 
-    roster_db = cfg("IMESSAGE_ROSTER_DB_ID")
     messages_db = cfg("IMESSAGE_MESSAGES_DB_ID")
-    if not roster_db:
-        sys.exit("IMESSAGE_ROSTER_DB_ID が未設定です（--setup で作成し .env に設定）。")
+    if not candidate_db:
+        sys.exit("IMESSAGE_CANDIDATE_DB_ID が未設定です（許可リストの正本＝候補者 DB）。")
 
-    exact, suffix = build_allowlist(roster_db)
+    exact, suffix = build_allowlist(candidate_db)
     if not exact:
-        print("⚠ 番号マスターに有効な電話番号/メールが1件もありません。")
+        print("⚠ 候補者 DB に携帯番号が登録された候補者が1人もいません。")
     conn, tmpdir = open_chat_db_readonly()
     try:
         if "--probe" in args:
@@ -491,6 +503,8 @@ def main():
                 print(f"  watermark は現在 {last_rowid} → 本番実行で {msgs[-1]['rowid']} まで進みます")
             return
 
+        if not messages_db:
+            sys.exit("IMESSAGE_MESSAGES_DB_ID が未設定です（--setup で作成し .env に設定）。")
         created = skipped = 0
         max_rowid = last_rowid
         for m in msgs:

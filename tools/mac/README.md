@@ -44,13 +44,17 @@ launchctl load ~/Library/LaunchAgents/com.pnl.video-processor.plist
 ## iMessage/SMS 履歴を Notion へ同期（`imessage_sync.py`）
 
 候補者との iMessage/SMS のやりとり「だけ」を、常時起動の mac mini 上の chat.db から
-**読み取り専用**で抜き出し、Notion に保存する。Notion に置いた「番号マスター」を許可リストの
-正本にして、一致した相手のスレッドだけを取り込む（家族・私用など許可リスト外の番号は構造上
-いっさい外に出ない＝デフォルト拒否）。Notion に乗せておくことで **Web/スマホ版 Claude Code
-からも普段の Notion コネクタで履歴を読める**。
+**読み取り専用**で抜き出し、Notion に保存する。許可リストの正本は**本来の「候補者」DB**で、
+その候補者ページの `携帯番号` に一致する相手のスレッドだけを取り込み、メッセージ履歴 DB の
+`候補者` relation を**候補者ページに直接ひも付ける**（家族・私用など許可リスト外の番号は構造上
+いっさい外に出ない＝デフォルト拒否）。別建ての「番号マスター」は作らない（候補者情報の二重持ち・
+重複の原因になる）。Notion に乗せておくことで **Web/スマホ版 Claude Code からも普段の Notion
+コネクタで履歴を読め**、候補者ページからその人との履歴を辿れる。
 
 ```
+[候補者DB: 携帯番号] ─(許可リスト)─┐
 [iPhone] --iCloud/SMS転送--> [mac mini: chat.db] --(該当番号だけ抽出)--> [Notion: メッセージ履歴DB]
+                                                                          └候補者ページに relation
                                                                               ▲ Web/スマホ版 Claude Code が読む
 ```
 
@@ -60,28 +64,29 @@ launchctl load ~/Library/LaunchAgents/com.pnl.video-processor.plist
    「システム設定 → プライバシーとセキュリティ → フルディスクアクセス」に追加。これが無いと
    `~/Library/Messages/chat.db` を開けない。
 2. **SMS も取るなら**：iPhone の「設定 → メッセージ → テキストメッセージ転送」で mini をオン。
-3. **Notion の DB を作る**（番号マスター＋メッセージ履歴を一発で作成）：
+3. **メッセージ履歴 DB を作る**（候補者 DB に relation した状態で作成）：
    ```bash
-   NOTION_TOKEN=ntn_xxx python3 tools/mac/imessage_sync.py --setup --parent <親ページのpage_id>
+   NOTION_TOKEN=ntn_xxx python3 tools/mac/imessage_sync.py --setup \
+       --parent <親ページのpage_id> --candidate-db <候補者DBの id>
    ```
-   出力された `IMESSAGE_ROSTER_DB_ID` / `IMESSAGE_MESSAGES_DB_ID` を `tools/mac/.env` に設定する。
-   Notion インテグレーションに両 DB が共有されているか確認する。
-4. **番号マスターに候補者を登録**：氏名（title）＋電話番号（複数はカンマ/読点区切り、Apple ID
-   メールも可）。`有効` チェックを外すと一時的に除外できる。
+   出力された `IMESSAGE_MESSAGES_DB_ID` / `IMESSAGE_CANDIDATE_DB_ID` を `tools/mac/.env` に設定する。
+   Notion インテグレーションに候補者 DB とメッセージ履歴 DB が共有されているか確認する。
+4. **候補者 DB の各候補者ページに `携帯番号` を入れる**（許可リストの正本。これが一致条件）。
+   表記は `080-xxxx-xxxx` でも `+81…` でも内部で正規化される。
 
 ### 運用
 
 ```bash
-python3 tools/mac/imessage_sync.py --probe     # chat.db のハンドルと許可リスト一致状況を確認（本文は出さない）
+python3 tools/mac/imessage_sync.py --probe     # chat.db のハンドルと候補者DBの一致状況（誰の番号か）を表示（本文は出さない）
 python3 tools/mac/imessage_sync.py --dry-run   # 誰の何件が取り込まれるかだけ表示（Notion 書込なし）
 python3 tools/mac/imessage_sync.py             # 差分のみ Notion へ upsert（GUID で重複防止・ROWID で差分管理）
 ```
 
 常駐させる場合は `com.pnl.imessage-sync.plist`（15分ごと）を `~/Library/LaunchAgents/` に置いて
-`launchctl load`。メッセージ DB は `相手 / 日時 / 方向 / サービス / 本文 / GUID / 候補者(relation)` 構成。
+`launchctl load`。メッセージ DB は `相手 / 日時 / 方向 / サービス / 本文 / GUID / 候補者(relation→候補者DB)` 構成。
 
-> **PII の扱い**：許可リスト（候補者番号）に一致したやりとりだけが Notion に複製される。
-> 業務外（家族・私用）は出ない設計だが、候補者の個人メッセージは Notion に乗るため、その DB は
+> **PII の扱い**：許可リスト（候補者ページの携帯番号）に一致したやりとりだけが Notion に複製される。
+> 業務外（家族・私用）は出ない設計だが、候補者の個人メッセージは Notion に乗るため、メッセージ履歴 DB は
 > 外部共有しないプライベート扱いに徹すること。読取専用で chat.db には一切書き込まない。
 
 ## ⚠ マシン固有・要調整（2台のMacで違う場合は各自で）
