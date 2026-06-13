@@ -14,6 +14,8 @@
 | `convert_ogg.py` | OGG→MP3/M4A 変換（NotebookLM取り込み用） | `python3 tools/mac/convert_ogg.py input.ogg [-f m4a] [-o out/]` | pydub, ffmpeg |
 | `mac_ogg_watcher.sh` / `setup_mac_auto_convert.sh` | ダウンロードフォルダを監視し OGG を自動 MP3 変換（launchd常駐をセットアップ） | `bash tools/mac/setup_mac_auto_convert.sh` | fswatch, ffmpeg |
 | `fix_mono_audio.py` | BlackHole録音が片耳になる問題を補正（モノラル→ステレオ） | `python3 tools/mac/fix_mono_audio.py input.wav` | 標準ライブラリのみ |
+| `imessage_sync.py` | 候補者との iMessage/SMS だけを chat.db（読取専用）から抜き Notion に保存。番号マスターで許可リスト・差分同期・常駐可 | `python3 tools/mac/imessage_sync.py [--dry-run\|--probe\|--setup]` | 標準ライブラリのみ（要 FDA） |
+| `com.pnl.imessage-sync.plist` | 上を **launchd で15分ごとに定期実行**する定義 | `~/Library/LaunchAgents/` に置いて `launchctl load` | launchd |
 | `minutes_templates/` `prompt_templates/` | 面談種別（候補者面談・打ち合わせ・説明会・面接同席）別の議事録／文字起こしプロンプト雛形 | video_processor から参照 | — |
 
 ## セットアップ（各 Mac で1回）
@@ -39,6 +41,49 @@ cp tools/mac/com.pnl.video-processor.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.pnl.video-processor.plist
 ```
 
+## iMessage/SMS 履歴を Notion へ同期（`imessage_sync.py`）
+
+候補者との iMessage/SMS のやりとり「だけ」を、常時起動の mac mini 上の chat.db から
+**読み取り専用**で抜き出し、Notion に保存する。Notion に置いた「番号マスター」を許可リストの
+正本にして、一致した相手のスレッドだけを取り込む（家族・私用など許可リスト外の番号は構造上
+いっさい外に出ない＝デフォルト拒否）。Notion に乗せておくことで **Web/スマホ版 Claude Code
+からも普段の Notion コネクタで履歴を読める**。
+
+```
+[iPhone] --iCloud/SMS転送--> [mac mini: chat.db] --(該当番号だけ抽出)--> [Notion: メッセージ履歴DB]
+                                                                              ▲ Web/スマホ版 Claude Code が読む
+```
+
+### セットアップ（mini で1回ずつ）
+
+1. **フルディスクアクセス（必須）**：Claude Code を動かすアプリ（ターミナル.app か VSCode）を
+   「システム設定 → プライバシーとセキュリティ → フルディスクアクセス」に追加。これが無いと
+   `~/Library/Messages/chat.db` を開けない。
+2. **SMS も取るなら**：iPhone の「設定 → メッセージ → テキストメッセージ転送」で mini をオン。
+3. **Notion の DB を作る**（番号マスター＋メッセージ履歴を一発で作成）：
+   ```bash
+   NOTION_TOKEN=ntn_xxx python3 tools/mac/imessage_sync.py --setup --parent <親ページのpage_id>
+   ```
+   出力された `IMESSAGE_ROSTER_DB_ID` / `IMESSAGE_MESSAGES_DB_ID` を `tools/mac/.env` に設定する。
+   Notion インテグレーションに両 DB が共有されているか確認する。
+4. **番号マスターに候補者を登録**：氏名（title）＋電話番号（複数はカンマ/読点区切り、Apple ID
+   メールも可）。`有効` チェックを外すと一時的に除外できる。
+
+### 運用
+
+```bash
+python3 tools/mac/imessage_sync.py --probe     # chat.db のハンドルと許可リスト一致状況を確認（本文は出さない）
+python3 tools/mac/imessage_sync.py --dry-run   # 誰の何件が取り込まれるかだけ表示（Notion 書込なし）
+python3 tools/mac/imessage_sync.py             # 差分のみ Notion へ upsert（GUID で重複防止・ROWID で差分管理）
+```
+
+常駐させる場合は `com.pnl.imessage-sync.plist`（15分ごと）を `~/Library/LaunchAgents/` に置いて
+`launchctl load`。メッセージ DB は `相手 / 日時 / 方向 / サービス / 本文 / GUID / 候補者(relation)` 構成。
+
+> **PII の扱い**：許可リスト（候補者番号）に一致したやりとりだけが Notion に複製される。
+> 業務外（家族・私用）は出ない設計だが、候補者の個人メッセージは Notion に乗るため、その DB は
+> 外部共有しないプライベート扱いに徹すること。読取専用で chat.db には一切書き込まない。
+
 ## ⚠ マシン固有・要調整（2台のMacで違う場合は各自で）
 
 これらのスクリプトには**ハードコードされたパス**が残っている。`satouyuuta`／`/pnl` が両Macで同じなら基本そのままで動くが、違う場合は以下を直す。
@@ -46,7 +91,8 @@ launchctl load ~/Library/LaunchAgents/com.pnl.video-processor.plist
 - `com.pnl.video-processor.plist` … `ProgramArguments` とログの絶対パス（`/Users/<user>/pnl/tools/mac/...`）。**`scripts/` → `tools/mac/` へ移設済みなので、旧版を入れている場合は要差し替え。**
 - `mac_ogg_watcher.sh` … 監視先 `WATCH_DIR="/Users/satouyuuta/Desktop/00_Download_sync"`。
 - `start_video_processor.sh` … venv はリポジトリ直下 `venv/` 前提、監視先は `~/Desktop`。
-- `video_processor.py` は `.env` を**スクリプトと同じ場所（`tools/mac/.env`）から読む**（`load_dotenv(__file__ の隣)`）。
+- `video_processor.py` は `.env` を**スクリプトと同じ場所（`tools/mac/.env`）から読む**（`load_dotenv(__file__ の隣)`）。`imessage_sync.py` も同じ場所の `.env` を読む（依存なしの最小ローダ）。
+- `com.pnl.imessage-sync.plist` … `ProgramArguments` とログの絶対パス（`/Users/<user>/pnl/...`）をこの Mac に合わせる。`imessage_sync.py` は標準ライブラリのみなので venv 不要・システム `python3` で動く。
 
 ## .env で使う主なキー（`.env.example` 参照）
 

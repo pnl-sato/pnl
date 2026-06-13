@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 候補者との iMessage/SMS 履歴を定期的に Notion へ同期する常駐ジョブ。
+     ⚠ パスはこの Mac に合わせて調整すること（/Users/<user>/pnl の部分）。
+     ⚠ launchd プロセスにもフルディスクアクセスが要る場合がある。うまく chat.db を
+        読めないときは、まず手動実行（ターミナル/VSCode に FDA 付与済み）で確認し、
+        それでも launchd 経由で読めない場合は launchd（または bash）に FDA を付与する。
+     配置: ~/Library/LaunchAgents/com.pnl.imessage-sync.plist に置いて
+           launchctl load ~/Library/LaunchAgents/com.pnl.imessage-sync.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pnl.imessage-sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/satouyuuta/pnl/tools/mac/imessage_sync.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <!-- 15分ごとに差分同期（KeepAlive ではなく定期実行） -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/satouyuuta/pnl/imessage_sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/satouyuuta/pnl/imessage_sync.log</string>
+</dict>
+</plist>
