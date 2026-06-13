@@ -75,7 +75,8 @@ Mobile：080-3930-1714
 - **代表（斉藤さん）との1on1の準備・報告まとめを作る場合、または候補者／クライアント／スカウトの動きを1on1報告フィードに残す場合** → `agents/one-on-one.md` を読む（正本は Craft `work > 20_1on1` の `1on1 報告フィード｜斉藤さん`。プロファイル更新やスカウト対応で報告価値のある動きが出たらフィードに「日付＋概要」を1行追記し、1on1準備時はそこから前回以降を拾う）
 - **全社の週次「Weekly全体MTG」の定例準備をする場合（前回定例〜今日の佐藤の動きから共有・相談項目を拾う）** → `agents/weekly-meeting.md` を読む（素材源は上記の1on1報告フィードを再利用し、定例の3バケツ＝①オファー周り②自分が同席したクライアント打合せ③今出す価値のある相談/ナレッジ、のバーで再フィルタ。議事録は Google ドキュメント＝巨大なので全文を読まない）
 - **文体・トーンに迷ったとき** → `agents/style.md` を読む
-- **Craft に書き込み・編集する場合（候補者プロファイル・クライアントmd・ポジションmd 等、`craft_write` を使う全タスク）** → `agents/craft-writing.md` を読む（改行・bullet 表示の落とし穴と確実に動く構文）
+- **Craft に書き込み・編集する場合（候補者プロファイル・クライアントmd・ポジションmd 等、`craft_write` を使う全タスク）** → `agents/craft-writing.md` を読む（改行・bullet 表示の落とし穴と確実に動く構文。§0 にセッション別ケース台帳＝失敗→成功の集合知）
+- **Notion に書き込み・編集する場合（`notion-create-pages`／`notion-update-page` 等を使う全タスク）** → `agents/notion-writing.md` を読む（`requires approval` の wedge と `NOTION_TOKEN` 直叩き回避策、enhanced markdown 書式・parent 種別の罠。§0 にセッション別ケース台帳＝失敗→成功の集合知）
 - **音声・録音の文字起こし／議事録作成を行う場合（Notion `AppSoundcore` 等の ogg、面談・打ち合わせ録音）** → `agents/transcription.md` を読む（Gemini 連携パイプライン。`tools/` のスクリプトで取得→文字起こし→Notion追記＋Googleドキュメント保存→議事録同期まで、音声/全文をコンテキストに通さず実行）
 - **Mac ローカルの音声・動画変換／録画処理ツール（OGG→MP3 自動変換・動画→文字起こし常駐・mono 補正）を使う・修正する場合** → `tools/mac/README.md` を読む（佐藤の Mac mini／MacBook で動かすローカルスクリプト群。**実行は各 Mac 上の VSCode/CLI 版 Claude Code 限定**、Web 版は読取・編集のみ。サーバ側の文字起こしパイプラインは `agents/transcription.md`／`tools/` が正本で役割が別）
 - **朝のその日の ToDo を生成する場合（注力ポジションのスカウト送信ノルマ＝今日の通数も算出して含める）** → `agents/daily-todo.md` を読む
