@@ -126,6 +126,16 @@ Mobile：080-3930-1714
 - 「{日付候補}でご都合いかがでしょうか。」
 - URLでの日程調整ツール返答時：「{選択日時}で確保させていただきました。」
 
+##### 日程調整リンク（Google カレンダー予約ページ｜企業打ち合わせ用）
+
+クライアントとの打ち合わせ日程をこちらから提示するときは、以下の佐藤の予約ページを所要時間別に使い分ける（2026-06 佐藤共有）。**候補者面談用は別リンク**（`agents/candidate-mail.md` §12 を参照）。取り違えない。
+
+| 所要 | 予約リンク |
+|---|---|
+| 60分 | https://calendar.app.google/AZPmX1cnC2aeZUb68 |
+| 45分 | https://calendar.app.google/tZDtLzWEgr16dv3NA |
+| 30分 | https://calendar.app.google/Lbw1DPWEZYTXrCHLA |
+
 ### 3. 守るべきルール
 
 - 件名は `【Pole&Line】` プレフィックスを基本とする（社内識別のため）。
