@@ -133,6 +133,10 @@ def build_props_create(d):
     if d.get("signal"):       p["追加シグナル"] = _text(d["signal"])
     if d.get("position"):     p["ポジション"] = _rel(d["position"])
     if d.get("scout"):        p["スカウト文"] = _rel(d["scout"])
+    if d.get("sent_date"):    p["送信日"] = _date(d["sent_date"])
+    if d.get("reply_date"):   p["返信日"] = _date(d["reply_date"])
+    if d.get("result"):       p["結果"] = _select(d["result"])
+    if d.get("sf_id"):        p["SF id"] = _text(d["sf_id"])
     return p
 
 
@@ -281,6 +285,166 @@ def cmd_list(args):
               f"返信{_val(pr,'返信日') or '-'} 結果{_val(pr,'結果') or '-'}")
 
 
+# ---- bulk 取り込み（Craft 旧台帳 → Notion 評価ログDB 移行用） ----
+
+COL_ALIASES = {
+    "評価日": "eval_date", "日付": "eval_date",
+    "媒体id": "media_id", "イニシャル": "media_id",
+    "現職カテゴリ": "gen_cat", "枠判定": "waku", "総合点": "score",
+    "判定": "judge", "一言所感": "memo",
+    "年代": "nendai", "年代(p#)": "nendai",
+    "送信日": "sent_date", "返信日": "reply_date", "結果": "result",
+    "sfid": "sf_id", "sf id": "sf_id",
+}
+# 語句判定 → A/B/C/D（出現順に判定。"見送り" を含む "送付" 誤爆を避けるため "見送り" を先に）
+WORD_JUDGE = [("積極送付", "A"), ("見送り", "D"), ("スカウト送付", "B"),
+              ("送付", "B"), ("要再評価", "C"), ("再評価", "C")]
+
+
+def _num(s):
+    m = re.search(r"-?\d+(?:\.\d+)?", s or "")
+    return float(m.group()) if m else None
+
+
+def _strip_fallback(mid):
+    return re.sub(r"（媒体[Ii][Dd]＝氏名フォールバック）", "", mid or "").strip()
+
+
+def _map_judge(raw, mode):
+    raw = (raw or "").strip()
+    m = re.match(r"\s*([ABCDabcd])\b", raw) or re.match(r"\s*([ABCDabcd])", raw)
+    if m and (mode != "words" or not re.search(r"[一-龯ぁ-んァ-ン]", raw[:2])):
+        return m.group(1).upper()
+    for w, l in WORD_JUDGE:
+        if w in raw:
+            return l
+    if m:
+        return m.group(1).upper()
+    return None
+
+
+def _media_auto(media_id, default):
+    if re.match(r"^BU\d+$", media_id or ""):
+        return "Bizreach"
+    return default or "Linkedin"   # 本データの非BizReach（slug/氏名）は LinkedIn 由来
+
+
+def _nendai(raw):
+    """'40代前半/P2' -> ('P2','40代前半',None) / '40歳/P2' -> ('P2',None,'年代=40歳/P2')"""
+    raw = (raw or "").strip()
+    if not raw or raw == "-":
+        return None, None, None
+    parts = re.split(r"[/／]", raw)
+    band_part = parts[0].strip() if parts else ""
+    persona_part = parts[1].strip() if len(parts) > 1 else ""
+    band = band_part if band_part in AGE_BANDS else None
+    pm = re.match(r"^(P[123])$", persona_part)
+    persona = pm.group(1) if pm else None
+    stash = f"年代={raw}" if (band_part and not band) or (persona_part and not persona) else None
+    return persona, band, stash
+
+
+def _row_dict(cells, cols, a):
+    raw = {}
+    for i, col in enumerate(cols):
+        key = COL_ALIASES.get(col.strip().lower())
+        if key:
+            raw[key] = cells[i].strip() if i < len(cells) else ""
+    media_id = _strip_fallback(raw.get("media_id", ""))
+    if not media_id:
+        return None
+    judge = _map_judge(raw.get("judge"), a["judge_map"])
+    persona, band, nendai_stash = _nendai(raw.get("nendai"))
+    sig = []
+    if a.get("sig_prefix"):
+        sig.append(a["sig_prefix"])
+    if raw.get("waku"):
+        sig.append(f"枠判定={raw['waku']}")
+    if nendai_stash:
+        sig.append(nendai_stash)
+    memo = raw.get("memo") or ""
+    rj = (raw.get("judge") or "").strip()
+    if rj and rj != (judge or ""):
+        memo = (memo + f" ｜判定注記:{rj}").strip()
+    return {
+        "media_id": media_id,
+        "eval_date": resolve_date(raw["eval_date"]) if raw.get("eval_date") else None,
+        "media": _media_auto(media_id, None if a["media"] == "auto" else a["media"]),
+        "gen_cat": raw.get("gen_cat") or None,
+        "score": _num(raw.get("score")),
+        "judge": judge,
+        "persona": persona,
+        "age_band": band,
+        "inferred": False,
+        "memo": memo or None,
+        "signal": " / ".join(sig) if sig else None,
+        "sent_date": resolve_date(raw["sent_date"]) if raw.get("sent_date") else None,
+        "reply_date": resolve_date(raw["reply_date"]) if raw.get("reply_date") else None,
+        "result": raw.get("result") or None,
+        "sf_id": raw.get("sf_id") or None,
+        "position": a.get("position"),
+        "scout": a.get("scout"),
+    }
+
+
+def _exists(media_id, position):
+    pid = _norm(page_id(position)) if position else None
+    for p in find_rows(media_id, 50):
+        rel = {_norm(r["id"]) for r in p["properties"].get("ポジション", {}).get("relation", [])}
+        if (pid is None and not rel) or (pid and pid in rel):
+            return True
+    return False
+
+
+def _norm(uuid):
+    return uuid.replace("-", "").lower()
+
+
+def cmd_bulk(args):
+    path = _opt(args, "--file")
+    cols_s = _opt(args, "--cols")
+    if not path or not cols_s:
+        sys.exit("bulk: --file と --cols（ソース列名のカンマ区切り）は必須")
+    a = {
+        "position": _opt(args, "--position"),
+        "scout": _opt(args, "--scout"),
+        "media": _opt(args, "--media", "auto"),
+        "judge_map": _opt(args, "--judge-map", "letters"),
+        "sig_prefix": _opt(args, "--sig-prefix"),
+    }
+    cols = [c.strip() for c in cols_s.split(",")]
+    rows = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if "|" not in line:
+                continue
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if not any(cells):
+                continue
+            if all(re.fullmatch(r"-*", c or "") for c in cells):   # 区切り行
+                continue
+            if cells[0] in ("評価日", "日付"):                       # ヘッダ行
+                continue
+            d = _row_dict(cells, cols, a)
+            if d:
+                rows.append(d)
+    print(f"parsed {len(rows)} 行 ← {path}")
+    if "--dry-run" in args:
+        for d in rows:
+            print("  ", {k: d[k] for k in ("eval_date", "media_id", "media", "score",
+                                           "judge", "persona", "age_band", "signal")})
+        print(f"[dry-run] {len(rows)} 行・書き込みなし")
+        return
+    created = skipped = 0
+    for d in rows:
+        if _exists(d["media_id"], d["position"]):
+            skipped += 1
+            continue
+        _req("/pages", {"parent": {"database_id": EVAL_DB}, "properties": build_props_create(d)})
+        created += 1
+    print(f"✓ bulk: created {created} / skipped(dup) {skipped} → position {a['position'] or '(なし)'}")
+
+
 def main():
     if not TOKEN:
         sys.exit("NOTION_TOKEN env var is required")
@@ -288,9 +452,9 @@ def main():
     if not args:
         sys.exit(__doc__)
     cmd, rest = args[0], args[1:]
-    {"create": cmd_create, "backfill": cmd_backfill,
+    {"create": cmd_create, "backfill": cmd_backfill, "bulk": cmd_bulk,
      "find": cmd_find, "list": cmd_list}.get(cmd, lambda a: sys.exit(
-        f"unknown command '{cmd}'（create / backfill / find / list）"))(rest)
+        f"unknown command '{cmd}'（create / backfill / bulk / find / list）"))(rest)
 
 
 if __name__ == "__main__":
