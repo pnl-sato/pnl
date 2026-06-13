@@ -381,11 +381,16 @@ def _rich(text):
     return items
 
 
-def _format_line(m):
-    """1 メッセージを履歴ページ本文の1行（段落）テキストにする。"""
+def _message_rich(m):
+    """1 メッセージを履歴ページ本文の1段落（rich_text 配列）にする。
+    送受信が一目で分かるよう、行頭ラベル（時刻＋方向）を太字＋色付きにする
+    （送信＝青／受信＝緑）。本文はプレーンで続け、2000字制限内に分割する。"""
     arrow = "▶" if m["direction"] == "送信" else "◀"
     svc = "" if m["service"] == "iMessage" else f"[{m['service']}]"
-    return f"{m['ts']} {arrow}{m['direction']}{svc}：{m['body']}"
+    color = "blue" if m["direction"] == "送信" else "green"
+    label = {"type": "text", "text": {"content": f"{m['ts']} {arrow}{m['direction']}{svc}："},
+             "annotations": {"bold": True, "color": color}}
+    return [label] + _rich(m["body"])
 
 
 def find_history_page(messages_db_id, candidate_id):
@@ -413,7 +418,7 @@ def create_history_page(messages_db_id, candidate_id, name):
 def append_messages(page_id, msgs):
     """メッセージ群を段落ブロックとして履歴ページ本文の末尾に追記（時系列を維持）。"""
     blocks = [{"object": "block", "type": "paragraph",
-               "paragraph": {"rich_text": _rich(_format_line(m))}} for m in msgs]
+               "paragraph": {"rich_text": _message_rich(m)}} for m in msgs]
     for i in range(0, len(blocks), MAX_BLOCKS_PER_REQ):
         _notion_req(f"/blocks/{page_id}/children",
                     {"children": blocks[i:i + MAX_BLOCKS_PER_REQ]}, method="PATCH")
