@@ -4,15 +4,18 @@
 設計（CLAUDE.md セッション「mac-mini-message-history」での決定）:
     常時起動の mac mini 上の Claude Code（VSCode/CLI）からローカル実行する前提。
     許可リストの正本は **本来の「候補者」DB（Notion）** とし、その候補者ページに登録された
-    携帯番号に一致するハンドルとのやりとり「だけ」を chat.db から抽出して、Notion の
-    「メッセージ履歴 DB」に **候補者ページへの relation 付き** で upsert する。許可リスト外の
-    番号（家族・私用）は構造上いっさい外に出ない（デフォルト拒否）。候補者ページから直接その人
-    との iMessage/SMS 履歴を辿れるようになり、Web/スマホ版 Claude Code からも普段の Notion
-    コネクタで読める。別建ての「番号マスター」は持たない（候補者情報の二重持ち・重複の温床になる）。
+    携帯番号に一致するハンドルとのやりとり「だけ」を chat.db から抽出する。許可リスト外の
+    番号（家族・私用）は構造上いっさい外に出ない（デフォルト拒否）。
+
+    保存形式は **「候補者1人 = メッセージ履歴ページ1枚」**（B 案）。会話ログをそのページ本文に
+    時系列で追記していく。理由は「Claude Code がなるべく網羅して読み込めること」が最優先のため
+    ＝ 候補者ごとに1ページ fetch すれば全履歴を一読でき、行数も最軽量（行数＝候補者数）で
+    DB が重くなりにくい。メッセージ履歴ページは候補者ページへ relation でひも付く。
 
     - 読み取り専用に徹する（送信機能・書き込み機能は chat.db 側に一切持たせない）。
     - 標準ライブラリのみ（sqlite3 / urllib）。venv 不要、システム python3 で動く。
     - Notion へは REST API（NOTION_TOKEN インテグレーション）で直叩き（既存 tools/ と同じ流儀）。
+    - 差分は watermark（最後に処理した message.ROWID）で管理するので、本文への二重追記は起きない。
 
 ⚠ 実行できるのは「その Mac 上で動く Claude Code（VSCode/CLI）」だけ。Web 版（クラウド）
    からは chat.db に触れないので読取・編集まで。詳細は tools/mac/README.md。
@@ -25,21 +28,16 @@
     3. Notion のインテグレーションに、候補者 DB とメッセージ履歴 DB の両方を共有する。
 
 セットアップ（メッセージ履歴 DB をまだ作っていない場合）:
-    # 親ページの page_id と候補者 DB の id を渡すと、候補者 DB に relation したメッセージ履歴 DB を作る
     NOTION_TOKEN=ntn_xxx python3 tools/mac/imessage_sync.py --setup \
         --parent <親ページの page_id> --candidate-db <候補者DBの id>
     # → 出力された database_id を tools/mac/.env の IMESSAGE_MESSAGES_DB_ID に設定する
 
 日常運用:
-    # 候補者 DB の各候補者ページに「携帯番号」を入れておく（許可リストの正本。これが一致条件）
-    # 取り込みの下見（Notion には書かない。誰の何件が引けるかだけ表示）
-    python3 tools/mac/imessage_sync.py --dry-run
-    # 本番（差分のみ Notion に upsert）
-    python3 tools/mac/imessage_sync.py
-    # 初回だけ直近 N 日に絞る（巨大同期を避ける。既定は IMESSAGE_LOOKBACK_DAYS）
-    python3 tools/mac/imessage_sync.py --lookback-days 90
-    # 番号の表記ゆれ調整用: chat.db に出てくるハンドルと件数を覗く（本文は出さない）
-    python3 tools/mac/imessage_sync.py --probe
+    # 候補者 DB の各候補者ページに「携帯番号」を入れておく（許可リストの正本＝一致条件）
+    python3 tools/mac/imessage_sync.py --dry-run    # 誰の何件が追記されるか（書込なし）
+    python3 tools/mac/imessage_sync.py              # 差分を各候補者の履歴ページ本文へ追記
+    python3 tools/mac/imessage_sync.py --lookback-days 90   # 初回の取得上限日数
+    python3 tools/mac/imessage_sync.py --probe      # chat.db のハンドルと一致状況（本文は出さない）
 
 環境変数（tools/mac/.env から自動読込）:
     NOTION_TOKEN              Notion インテグレーショントークン（必須）
@@ -62,6 +60,7 @@ import sys
 import tempfile
 import urllib.request
 import urllib.error
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
 API = "https://api.notion.com/v1"
@@ -70,7 +69,8 @@ JST = timezone(timedelta(hours=9), "JST")
 APPLE_EPOCH = 978307200  # 2001-01-01 00:00:00 UTC を UNIX 時刻に直すオフセット
 
 MAX_RICH_CHARS = 1900       # Notion rich_text は 2000 字/要素まで（余裕を見て 1900）
-MAX_RICH_ITEMS = 90         # 1 プロパティの rich_text 配列は 100 要素まで
+MAX_RICH_ITEMS = 90         # 1 プロパティ/ブロックの rich_text 配列は 100 要素まで
+MAX_BLOCKS_PER_REQ = 90     # 1 回の children append は 100 ブロックまで
 
 
 # ─────────────────────────────────────────── .env / 設定 ────────────────────
@@ -304,7 +304,7 @@ def fetch_messages(conn, matched_handle_rows, after_rowid, since_unix):
     ids = list(matched_handle_rows.keys())
     placeholders = ",".join("?" for _ in ids)
     sql = (
-        "SELECT m.ROWID AS rowid, m.guid AS guid, m.date AS date, m.text AS text, "
+        "SELECT m.ROWID AS rowid, m.date AS date, m.text AS text, "
         "       m.attributedBody AS abody, m.is_from_me AS is_from_me, "
         "       m.service AS service, m.handle_id AS handle_id "
         "FROM message m "
@@ -323,10 +323,11 @@ def fetch_messages(conn, matched_handle_rows, after_rowid, since_unix):
         if not body:
             continue  # 添付のみ・リアクション等は本文が無いのでスキップ
         pid, name = matched_handle_rows[r["handle_id"]]
+        iso = apple_time_to_iso(r["date"]) or ""
         out.append({
             "rowid": r["rowid"],
-            "guid": r["guid"],
-            "iso": apple_time_to_iso(r["date"]),
+            "iso": iso,
+            "ts": iso[:16].replace("T", " "),  # "2026-06-09 18:11"
             "body": body,
             "direction": "送信" if r["is_from_me"] else "受信",
             "service": r["service"] or "iMessage",
@@ -369,10 +370,10 @@ def save_watermark(rowid):
                    "updated": datetime.now(JST).isoformat()}, f, ensure_ascii=False)
 
 
-# ─────────────────────────────────────────── Notion 書き込み ───────────────
+# ─────────────────────────────── Notion 書き込み（候補者1人=1ページに追記）──
 
 def _rich(text):
-    """本文を 2000 字制限内の rich_text 配列に分割。"""
+    """テキストを 2000 字制限内の rich_text 配列に分割。"""
     items, t = [], text
     while t and len(items) < MAX_RICH_ITEMS:
         items.append({"type": "text", "text": {"content": t[:MAX_RICH_CHARS]}})
@@ -380,30 +381,53 @@ def _rich(text):
     return items
 
 
-def guid_exists(messages_db_id, guid):
+def _format_line(m):
+    """1 メッセージを履歴ページ本文の1行（段落）テキストにする。"""
+    arrow = "▶" if m["direction"] == "送信" else "◀"
+    svc = "" if m["service"] == "iMessage" else f"[{m['service']}]"
+    return f"{m['ts']} {arrow}{m['direction']}{svc}：{m['body']}"
+
+
+def find_history_page(messages_db_id, candidate_id):
+    """候補者 ID（relation 先 page_id）をキーに既存の履歴ページを探す。無ければ None。"""
     res = _notion_req(f"/databases/{messages_db_id}/query",
-                      {"filter": {"property": "GUID", "rich_text": {"equals": guid}},
+                      {"filter": {"property": "候補者ID",
+                                  "rich_text": {"equals": candidate_id}},
                        "page_size": 1})
-    return bool(res.get("results"))
+    r = res.get("results")
+    return r[0]["id"] if r else None
 
 
-def create_message_page(messages_db_id, msg):
-    props = {
-        "相手": {"title": [{"text": {"content": msg["candidate_name"]}}]},
-        "日時": {"date": {"start": msg["iso"]}} if msg["iso"] else {"date": None},
-        "方向": {"select": {"name": msg["direction"]}},
-        "サービス": {"select": {"name": msg["service"]}},
-        "本文": {"rich_text": _rich(msg["body"])},
-        "GUID": {"rich_text": [{"text": {"content": msg["guid"]}}]},
-        "候補者": {"relation": [{"id": msg["candidate_id"]}]},
-    }
-    _notion_req("/pages", {"parent": {"database_id": messages_db_id}, "properties": props})
+def create_history_page(messages_db_id, candidate_id, name):
+    res = _notion_req("/pages", {
+        "parent": {"database_id": messages_db_id},
+        "properties": {
+            "相手": {"title": [{"text": {"content": name}}]},
+            "候補者": {"relation": [{"id": candidate_id}]},
+            "候補者ID": {"rich_text": [{"text": {"content": candidate_id}}]},
+        },
+    })
+    return res["id"]
+
+
+def append_messages(page_id, msgs):
+    """メッセージ群を段落ブロックとして履歴ページ本文の末尾に追記（時系列を維持）。"""
+    blocks = [{"object": "block", "type": "paragraph",
+               "paragraph": {"rich_text": _rich(_format_line(m))}} for m in msgs]
+    for i in range(0, len(blocks), MAX_BLOCKS_PER_REQ):
+        _notion_req(f"/blocks/{page_id}/children",
+                    {"children": blocks[i:i + MAX_BLOCKS_PER_REQ]}, method="PATCH")
+    # 最終更新日時プロパティを最後のメッセージ時刻に更新（あれば）
+    if msgs and msgs[-1]["iso"]:
+        _notion_req(f"/pages/{page_id}",
+                    {"properties": {"最終更新": {"date": {"start": msgs[-1]["iso"]}}}},
+                    method="PATCH")
 
 
 # ─────────────────────────────────────────── --setup（DB 作成）─────────────
 
 def setup_messages_db(parent_page_id, candidate_db_id):
-    """候補者 DB に relation したメッセージ履歴 DB を1つ作る。"""
+    """候補者 DB に relation したメッセージ履歴 DB（候補者1人=1ページ）を作る。"""
     parent_page_id = parent_page_id.replace("-", "")
     candidate_db_id = candidate_db_id.replace("-", "")
     messages = _notion_req("/databases", {
@@ -411,17 +435,13 @@ def setup_messages_db(parent_page_id, candidate_db_id):
         "title": [{"type": "text", "text": {"content": "メッセージ履歴｜iMessage/SMS"}}],
         "properties": {
             "相手": {"title": {}},
-            "日時": {"date": {}},
-            "方向": {"select": {"options": [
-                {"name": "送信", "color": "blue"}, {"name": "受信", "color": "green"}]}},
-            "サービス": {"select": {"options": [
-                {"name": "iMessage", "color": "blue"}, {"name": "SMS", "color": "gray"}]}},
-            "本文": {"rich_text": {}},
-            "GUID": {"rich_text": {}},
             "候補者": {"relation": {"database_id": candidate_db_id, "single_property": {}}},
+            "候補者ID": {"rich_text": {}},
+            "最終更新": {"date": {}},
         },
     })
-    print("✓ メッセージ履歴 DB を作成しました。tools/mac/.env に以下を設定してください：")
+    print("✓ メッセージ履歴 DB を作成しました（候補者1人=1ページ・本文に会話ログ追記）。")
+    print("  tools/mac/.env に以下を設定してください：")
     print(f"  IMESSAGE_MESSAGES_DB_ID={messages['id'].replace('-', '')}")
     print(f"  IMESSAGE_CANDIDATE_DB_ID={candidate_db_id}")
     print("※ インテグレーションに候補者 DB とこの DB が共有されているか確認してください。")
@@ -490,33 +510,30 @@ def main():
             since_unix = (datetime.now(JST) - timedelta(days=lookback)).timestamp()
 
         msgs = fetch_messages(conn, matched, last_rowid, since_unix)
-        dry = "--dry-run" in args
+        # 候補者ごとにまとめる（本文へまとめて追記するため）
+        groups = defaultdict(list)
+        for m in msgs:
+            groups[(m["candidate_id"], m["candidate_name"])].append(m)
 
-        if dry:
-            from collections import Counter
-            by_name = Counter(m["candidate_name"] for m in msgs)
+        if "--dry-run" in args:
             print(f"[dry-run] 一致ハンドル {len(matched)} 種 / 取り込み対象 {len(msgs)} 件"
                   + (f"（直近{lookback}日に限定）" if since_unix else ""))
-            for name, n in by_name.most_common():
-                print(f"  {n:>5}件  {name}")
+            for (cid, name), items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+                print(f"  {len(items):>5}件  {name}")
             if msgs:
                 print(f"  watermark は現在 {last_rowid} → 本番実行で {msgs[-1]['rowid']} まで進みます")
             return
 
         if not messages_db:
             sys.exit("IMESSAGE_MESSAGES_DB_ID が未設定です（--setup で作成し .env に設定）。")
-        created = skipped = 0
         max_rowid = last_rowid
-        for m in msgs:
-            max_rowid = max(max_rowid, m["rowid"])
-            if guid_exists(messages_db, m["guid"]):
-                skipped += 1
-                continue
-            create_message_page(messages_db, m)
-            created += 1
+        for (cid, name), items in groups.items():
+            page_id = find_history_page(messages_db, cid) or create_history_page(messages_db, cid, name)
+            append_messages(page_id, items)
+            max_rowid = max(max_rowid, max(i["rowid"] for i in items))
         if max_rowid > last_rowid:
             save_watermark(max_rowid)
-        print(f"✓ 同期完了: 新規 {created} 件 / 既存スキップ {skipped} 件 "
+        print(f"✓ 同期完了: {len(msgs)} 件を {len(groups)} 名の履歴ページに追記 "
               f"/ watermark {last_rowid}→{max_rowid}")
     finally:
         conn.close()
