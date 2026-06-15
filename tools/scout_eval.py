@@ -27,6 +27,9 @@
         --media-id BU5854836 --reply-date today --result 面談 --sf-id 003xxxxxxxxxxxx \
         [--sent-date 2026-06-10] [--candidate <page_id|url>]
 
+    # 評価フレームが出力した「登録ブロック（パイプ1行）」をファイルにまとめて一括取り込み
+    python3 tools/scout_eval.py bulk --from-block-file lines.txt --position <page_id|url> [--dry-run]
+
     # 確認
     python3 tools/scout_eval.py find --media-id BU5854836
     python3 tools/scout_eval.py list [--limit 20]
@@ -168,23 +171,28 @@ def _val(pr, name):
     return None
 
 
+def _block_to_dict(blk):
+    """登録ブロック（パイプ1行・BLOCK_COLS 順）→ create 用 dict。"""
+    parts = [c.strip() for c in re.split(r"[｜|]", blk)]
+    if len(parts) < len(BLOCK_COLS):
+        sys.exit(f"登録ブロックは {len(BLOCK_COLS)}列（{'｜'.join(BLOCK_COLS)}）。受領 {len(parts)}列: {blk[:60]}")
+    m = dict(zip(BLOCK_COLS, parts))
+    return {
+        "eval_date": resolve_date(m["評価日"]) if m["評価日"] else None,
+        "media_id": m["媒体ID"], "media": m["媒体"] or None,
+        "gen_cat": m["現職カテゴリ"] or None,
+        "score": float(m["総合点"]) if m["総合点"] else None,
+        "judge": m["判定"] or None, "persona": m["ペルソナ"] or None,
+        "age_band": m["年代バンド"] or None,
+        "inferred": m["推定heavy"].strip().lower() in TRUTHY,
+        "memo": m["一言所感"] or None, "signal": m["追加シグナル"] or None,
+    }
+
+
 def cmd_create(args):
     blk = _opt(args, "--from-block")
     if blk:
-        parts = [c.strip() for c in re.split(r"[｜|]", blk)]
-        if len(parts) < len(BLOCK_COLS):
-            sys.exit(f"--from-block は {len(BLOCK_COLS)}列（{'｜'.join(BLOCK_COLS)}）。受領 {len(parts)}列")
-        m = dict(zip(BLOCK_COLS, parts))
-        d = {
-            "eval_date": resolve_date(m["評価日"]) if m["評価日"] else None,
-            "media_id": m["媒体ID"], "media": m["媒体"] or None,
-            "gen_cat": m["現職カテゴリ"] or None,
-            "score": float(m["総合点"]) if m["総合点"] else None,
-            "judge": m["判定"] or None, "persona": m["ペルソナ"] or None,
-            "age_band": m["年代バンド"] or None,
-            "inferred": m["推定heavy"].strip().lower() in TRUTHY,
-            "memo": m["一言所感"] or None, "signal": m["追加シグナル"] or None,
-        }
+        d = _block_to_dict(blk)
     else:
         score = _opt(args, "--score")
         d = {
@@ -401,6 +409,38 @@ def _norm(uuid):
 
 
 def cmd_bulk(args):
+    # 評価フレームが出力した「登録ブロック（パイプ1行）」のファイルをそのまま一括 create
+    fbf = _opt(args, "--from-block-file")
+    if fbf:
+        position = _opt(args, "--position")
+        scout = _opt(args, "--scout")
+        rows = []
+        with open(fbf, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("評価日") or len(re.findall(r"[｜|]", line)) < 8:
+                    continue   # 空行・フォーマット見本行・非ブロック行はスキップ
+                d = _block_to_dict(line)
+                d["position"] = position
+                d["scout"] = scout
+                rows.append(d)
+        print(f"parsed {len(rows)} 行 ← {fbf}（from-block）")
+        if "--dry-run" in args:
+            for d in rows:
+                print("  ", {k: d[k] for k in ("eval_date", "media_id", "media",
+                                               "score", "judge", "persona", "age_band")})
+            print(f"[dry-run] {len(rows)} 行・書き込みなし")
+            return
+        created = skipped = 0
+        for d in rows:
+            if _exists(d["media_id"], d["position"]):
+                skipped += 1
+                continue
+            _req("/pages", {"parent": {"database_id": EVAL_DB}, "properties": build_props_create(d)})
+            created += 1
+        print(f"✓ bulk(from-block): created {created} / skipped(dup) {skipped} → position {position or '(なし)'}")
+        return
+
     path = _opt(args, "--file")
     cols_s = _opt(args, "--cols")
     if not path or not cols_s:
