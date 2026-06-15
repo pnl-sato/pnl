@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Chrome → Safari ブックマーク同期を launchd で定期実行する定義（任意）。
+  既定は1時間ごと。Safari 起動中はスキップさせたいので --quit-safari は付けない
+  （勝手に Safari を落とさない安全側）。常駐させたい場合のみ導入する。
+
+  導入手順（各 Mac で1回。パスは自分の環境に合わせて修正）:
+    1) この plist の /Users/satouyuuta と /pnl のパスを自分の Mac に合わせる
+    2) cp tools/mac/com.pnl.chrome-to-safari-bookmarks.plist ~/Library/LaunchAgents/
+    3) launchctl load ~/Library/LaunchAgents/com.pnl.chrome-to-safari-bookmarks.plist
+    4) ~/Library/Safari/ への書き込みのため、実行プロセスにフルディスクアクセスを付与
+  停止: launchctl unload ~/Library/LaunchAgents/com.pnl.chrome-to-safari-bookmarks.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pnl.chrome-to-safari-bookmarks</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/satouyuuta/pnl/tools/mac/chrome_to_safari_bookmarks.py</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/satouyuuta/pnl/tools/mac/logs/chrome-to-safari.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/satouyuuta/pnl/tools/mac/logs/chrome-to-safari.err.log</string>
+</dict>
+</plist>

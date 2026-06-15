@@ -14,6 +14,8 @@
 | `convert_ogg.py` | OGG→MP3/M4A 変換（NotebookLM取り込み用） | `python3 tools/mac/convert_ogg.py input.ogg [-f m4a] [-o out/]` | pydub, ffmpeg |
 | `mac_ogg_watcher.sh` / `setup_mac_auto_convert.sh` | ダウンロードフォルダを監視し OGG を自動 MP3 変換（launchd常駐をセットアップ） | `bash tools/mac/setup_mac_auto_convert.sh` | fswatch, ffmpeg |
 | `fix_mono_audio.py` | BlackHole録音が片耳になる問題を補正（モノラル→ステレオ） | `python3 tools/mac/fix_mono_audio.py input.wav` | 標準ライブラリのみ |
+| `chrome_to_safari_bookmarks.py` | Chrome→Safari ブックマーク一方向同期（Chrome が正）。書き込み前にバックアップ、Safari起動中は中断 | `python3 tools/mac/chrome_to_safari_bookmarks.py --dry-run` → 本番 | 標準ライブラリのみ（要フルディスクアクセス） |
+| `com.pnl.chrome-to-safari-bookmarks.plist` | 上を **launchd で定期実行**（既定1時間ごと）するための定義（任意） | `~/Library/LaunchAgents/` に置いて `launchctl load` | launchd |
 | `minutes_templates/` `prompt_templates/` | 面談種別（候補者面談・打ち合わせ・説明会・面接同席）別の議事録／文字起こしプロンプト雛形 | video_processor から参照 | — |
 
 ## セットアップ（各 Mac で1回）
@@ -38,6 +40,33 @@ bash tools/mac/setup_mac_auto_convert.sh
 cp tools/mac/com.pnl.video-processor.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.pnl.video-processor.plist
 ```
+
+## Chrome → Safari ブックマーク同期（chrome_to_safari_bookmarks.py）
+
+Chrome のブックマークを正として Safari に一方向で反映する。双方向ではないので衝突解決は不要。
+
+**前提・注意：**
+
+- Safari は**過去に1回起動して `~/Library/Safari/Bookmarks.plist` が出来ている**こと（まっさらだと書き込み先が無い）。毎回起動しておく必要はない。
+- 書き込む瞬間に **Safari が起動中だと終了時に上書きされて反映が消える**ため、既定では起動中は中断する。`--quit-safari` で自動終了、`--force` で無視。
+- `~/Library/Safari/` はプライバシー保護対象なので、実行プロセス（ターミナル／VSCode／python）に**システム設定 > プライバシーとセキュリティ > フルディスクアクセス**を付与する。
+- 書き込み前に `Bookmarks.plist.bak-<日時>` を自動バックアップ（既定10世代）。Safari の Reading List は温存。
+- v1 は**全置換**（ブックマークバー＝Chrome の bookmark_bar、その他＝1フォルダにまとめて root へ）。Safari だけに手動で作ったブックマークは消える。
+
+**使い方：**
+
+```bash
+# まず件数確認（書き込まない）
+python3 tools/mac/chrome_to_safari_bookmarks.py --dry-run
+
+# Safari を閉じてから本番（起動中なら中断される）
+python3 tools/mac/chrome_to_safari_bookmarks.py
+
+# 起動中でも自動で Safari を終了させて反映したい場合
+python3 tools/mac/chrome_to_safari_bookmarks.py --quit-safari
+```
+
+別プロファイルや別パスは `--chrome-bookmarks` / `--safari-bookmarks` で指定。定期実行は `com.pnl.chrome-to-safari-bookmarks.plist` を launchd に登録する（任意。冒頭コメント参照）。
 
 ## ⚠ マシン固有・要調整（2台のMacで違う場合は各自で）
 
