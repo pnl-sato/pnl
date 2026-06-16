@@ -29,6 +29,19 @@ python3 tools/notion_active_todos.py --category "Pole&Line" --json
 - ToDo DB の `database_id` と `data source(collection) ID` は別物。本スクリプトは REST query 用に `database_id` を内蔵済み。
 - Waiting（相手ボール）も「未完」なので既定で含む。NextAction と区別したいときは TaskType で見る。
 
+## ToDo の起票（行作成・MCP 非依存）｜`notion_create_todo.py`
+
+ToDo DB に1行を **NOTION_TOKEN 直叩き**で作る。MCP（`notion-create-pages`）は無人実行中に
+`requires approval` で wedge する（CLAUDE.md §14）ため、**夜間ルーティンの確認タスク起票はこれを使う**
+（agents/routines.md ①②③）。承認ゲートに当たらないのでヘッドレスでも確実。
+
+```bash
+# 既定: TaskType=Inbox 📨 / Category=Pole&Line / ステータス=未着手
+python3 tools/notion_create_todo.py "[佐藤] 〇〇 プロファイル作成に確認要" --candidate <Notionページ ID>
+# 企業案件・ポジション・スカウト等の relation も指定可（複数回指定で複数 relation）
+python3 tools/notion_create_todo.py "[Claude] △△ の要確認" --client <pageid> --scout-todo
+```
+
 ---
 
 # 音声文字起こし → 議事録 パイプライン（Gemini 連携）
