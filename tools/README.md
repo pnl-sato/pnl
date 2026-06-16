@@ -42,6 +42,37 @@ python3 tools/notion_create_todo.py "[佐藤] 〇〇 プロファイル作成に
 python3 tools/notion_create_todo.py "[Claude] △△ の要確認" --client <pageid> --scout-todo
 ```
 
+## 案件サーチの構造化取込（recall 担保）｜`sf_jobs_ingest.py`
+
+SF の **open 案件**を取り込み、各 JD（`information__c`）を **Gemini で構造化**して
+Notion DB『案件サーチ｜SFミラー』へ **SF案件ID で upsert** する（重複作成しない）。
+候補者マッチの**網羅性（recall）**を担保するための母集団づくり。設計の背景と使い方は
+`agents/client-profile.md` §7.5 と `agents/routines.md` ⑤ を参照。
+
+- **なぜ要るか：** open 案件は約5,000件・職種 null が約2割・誤タグ／重複／イベント告知が
+  混在し、クエリ時のキーワード絞り込みでは取りこぼす。取り込み時に一度だけ構造化すれば、
+  マッチ時は構造化済みDBを読むだけで recall を担保できる。
+- **コンテキスト非通過：** SF SOAP ログイン → REST 取得 → HTML 除去 → Gemini（JSON 強制）→
+  Notion upsert まで**すべてスクリプト内で完結**。JD 全文を Claude のコンテキストに通さない。
+- タグ体系は Craft『完成版｜求人構造化評価プロンプト（候補者DB互換）』が正本（候補者DBと同一軸）。
+
+```bash
+# 日次の増分（夜間ルーティン）。直近1日 ×openを upsert
+python3 tools/sf_jobs_ingest.py
+
+# 初回バックフィル（直近30日・約670件）
+python3 tools/sf_jobs_ingest.py --days 30
+
+# 小さく試す / 書かずに分類だけ見る
+python3 tools/sf_jobs_ingest.py --days 1 --limit 5 --verbose
+python3 tools/sf_jobs_ingest.py --days 1 --limit 3 --dry-run
+```
+
+- 必要な環境変数：`SALESFORCE_USERNAME/PASSWORD/TOKEN/INSTANCE_URL`・`GEMINI_API_KEY`・`NOTION_TOKEN`
+  （DB『案件サーチ｜SFミラー』にインテグレーションを共有しておくこと）。MCP コネクタには依存しない。
+- 鮮度は `CreatedDate`（新規起票日）で絞る。SF の `LastModifiedDate` は Bot が全件触り続けて死んでいる。
+- `gemini-2.5-*` は thinking が既定 ON で出力が途中で切れるため、スクリプトは `thinkingBudget: 0` で無効化済み。
+
 ---
 
 # 音声文字起こし → 議事録 パイプライン（Gemini 連携）

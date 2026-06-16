@@ -283,6 +283,39 @@ CLAUDE.md と sf_structure.md を最初に読み、sf_structure.md を最新の 
 - 変更が無ければ「変更なし（スキーマ安定）」と明記。
 ```
 
+### ⑤ 夜間 案件サーチ取込（🔎 SF案件→Notion構造化ミラー・①〜④とは別目的）
+
+①②が Craft にプロファイルを作り、③が点検、④が SF スキーマ正本を更新するのに対し、これは **SF の open 案件を Gemini で構造化して Notion『案件サーチ｜SFミラー』へ取り込む** Routine。狙いは候補者マッチの**網羅性（recall）担保**（設計の背景は `agents/client-profile.md` §7.5）。成果物は Notion（git には書かない）。
+
+- **何をするか：** `tools/sf_jobs_ingest.py` が SF SOAP ログイン → `StageName='open' AND CreatedDate=LAST_N_DAYS:1` を全件取得 → 各 JD（`information__c`）を Gemini で Craft『完成版｜求人構造化評価プロンプト（候補者DB互換）』のタグ体系に構造化 → Notion DB へ **SF案件ID で upsert**（重複作成しない）。**JD 全文は Claude のコンテキストに通さない**（スクリプト内で完結）。
+- **なぜ取り込み型か：** open 案件は約5,000件・職種 null が約2割・誤タグ／重複／イベント告知が混在し、クエリ時のキーワード絞り込みでは取りこぼす。取り込み時に一度だけ構造化すれば、マッチ時は構造化済みDBを読むだけで recall を担保できる（§7.5）。
+- **スケジュール：** 毎日 @ **1:30 JST**（①②の backfill と同夜で可。別 routine にする）。`/schedule` で「毎日深夜1時半」、または daily 作成。
+- **モデル：** スクリプトが Gemini を直接叩くので、起動役の Claude は **Sonnet 4.6**（軽い。Opus 週次枠は使わない）。
+- **リポジトリ：** `pnl-sato/pnl`。
+- **環境：** **SF 環境変数（USERNAME/PASSWORD/TOKEN/INSTANCE_URL）＋ `GEMINI_API_KEY` ＋ `NOTION_TOKEN` が入った環境必須**（①②と同じ環境でよい。まっさら Default は不可）。
+- **コネクタ：** 不要（SF/Gemini/Notion すべてスクリプトが環境変数で直叩き。MCP コネクタには依存しない＝無人実行で wedge しない）。
+
+**プロンプト（そのまま貼り付け）:**
+
+```text
+あなたは Pole&Line の業務エージェントです。リポジトリ pnl-sato/pnl の tools/sf_jobs_ingest.py を
+使って、SF の open 案件を Notion『案件サーチ｜SFミラー』へ構造化取り込みするランです。
+JD 全文はコンテキストに載せない（スクリプトが直接 API を叩く）。トークンは最小限。
+
+## 手順
+1. 直近分を取り込む：`python3 tools/sf_jobs_ingest.py --days 2`
+   （前夜失敗時の取りこぼし防止に2日窓。SF案件IDで upsert するので重複しない）
+2. スクリプトの完了行（created/updated/JD無し/error の件数）を確認する。
+3. error が多い（>対象の2割）場合のみ、`tools/notion_create_todo.py` で
+   「[Claude] 案件サーチ取込でエラー多発・要確認」を Inbox 📨 で起票する（NOTION_TOKEN 直叩き・§14）。
+
+## 完了時の報告（セッション末尾）
+- created / updated / JD無し / error の件数。error があればサンプル1〜2件の理由。
+- 正常時は「取込OK（created N / updated M）」と1行で。
+```
+
+> **初回バックフィル：** 本運用前に一度だけ `python3 tools/sf_jobs_ingest.py --days 30` を回して直近30日（約670件）を入れておく（手動 or Run now）。以降は日次 `--days 2` で増分が乗る。
+
 ---
 
 ## 4. 登録手順（`claude.ai/code/routines` → New routine）
