@@ -267,13 +267,15 @@
 | データ | 正本 | 更新先 |
 |---|---|---|
 | 基本プロフィール（年収・職種など） | **Notion 候補者DB** | Notion を直接更新 → Craft は再同期で反映 |
-| 選考状況・パイプライン | **Notion パイプライン + SF matching__c** | 両方を直接更新 → Craft は再同期で反映 |
+| 選考状況・パイプライン | **Notion パイプライン + SF matching__c** | ★**必ず両方を直接更新**（片方だけにしない）→ Craft は再同期で反映 |
 | 推薦理由・転職検討理由 | **Notion パイプライン** | Notion を直接更新 → Craft は再同期で反映 |
 | 推薦状本文 | **Craft 別ドキュメント**（`12_Client｜企業` 配下） | Craft で直接編集 |
 | 面談メモ | **Notion 面談メモDB** | Notion を直接更新 → Craft は再同期で反映 |
 | 申し送り事項・本人発言の解釈・Slack 言及要約 | **Craft 候補者プロファイル md** | Craft を直接更新 |
 
 つまり Craft プロファイル md は **「Notion + SF + Gmail + LinkedIn + Slack の集約ビュー」＋「Craft 固有の解釈・申し送り」**。
+
+> **★パイプライン更新は Notion と SF の二重更新が必須（2026-06 佐藤指示）。** Notion パイプライン（`選考状況`・`リリース理由`）だけ直して SF `matching__c` を放置しない。SF 側の対応項目と値マッピングは `sf_structure.md`「Notion 選考状況 ↔ matching__c マッピング」を参照（例：Notion `選考状況=リリース`＋`リリース理由=保留` ＝ SF `phase__c=脱落`＋`DropReason__c=リリース`＋`DropReasonDetail__c` に経緯＋`X01__c` に脱落日）。横断キーは `matching__c.Notion_Page_ID__c`＝Notion パイプラインページID（未設定なら更新時に併せてセット）。
 
 ---
 
