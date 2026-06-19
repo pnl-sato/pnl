@@ -46,7 +46,8 @@
 
 朝ToDoを出すとき、他メンバーのカレンダーを横断で見て、**佐藤が同席すると価値が出そうな打ち合わせ**を1〜数件ピックして併記する。基準は固定せず、**毎朝候補を出して佐藤の反応で絞り込む**運用（「これは見たい／これは要らない」を蓄積して精度を上げる）。下記は初期フィルタ。
 
-1. **対象カレンダー（社内メンバー）：** `masakisaito@pnl.co.jp`（代表）／`yamada@pnl.co.jp`／`yusukefuruichi@pnl.co.jp`／`r.shimizu@pnl.co.jp`／`tsakurai@pnl.co.jp`／`suzuka.kawauchi@pnl.co.jp`／`satoshi_matsumura@pnl.co.jp`／`ksugibayashi@pnl.co.jp`。`mcp__Google_Calendar__list_events` を各IDで叩く（calendar ID 一覧は `mcp__Google_Calendar__list_calendars`）。
+1. **対象カレンダー（社内メンバー）：** `masakisaito@pnl.co.jp`（代表）／`yamada@pnl.co.jp`／`yusukefuruichi@pnl.co.jp`／`r.shimizu@pnl.co.jp`／`satoshi_matsumura@pnl.co.jp`。`mcp__Google_Calendar__list_events` を各IDで叩く（calendar ID 一覧は `mcp__Google_Calendar__list_calendars`）。
+   - **対象外（2026-06 佐藤指示）：** 杉林（`ksugibayashi@pnl.co.jp`）・櫻井（`tsakurai@pnl.co.jp`）・河内（`suzuka.kawauchi@pnl.co.jp`）はスキャン対象に含めない。
 2. **スキャン窓：** 平日は当日＋翌営業日を基本、**月曜は1週間先まで**広げて先回りする（直前だと予定を空けられないため）。
 3. **拾う（＝同席価値が高い）：**
    - 新規クライアントの**初回打ち合わせ／キックオフ**（シニア同席で関係構築・受注角度が上がる）。
