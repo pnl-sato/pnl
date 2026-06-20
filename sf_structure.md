@@ -4,7 +4,7 @@
 >
 > **更新方式：** `agents/routines.md`「④ 週末SF構造リフレッシュ」が**週1回**、対象オブジェクトを `salesforce_describe_object` で取得→**選択肢値・フィールド増減だけ蒸留**→**差分があるときだけ `automation/sf-structure-refresh` ブランチで PR を開き、佐藤が diff をレビューして手動マージ**する（スキーマ変化を確認してから入れるため PR 経由。GitHub プロキシは push を checkout 中のブランチに限定する点に注意）。重い describe を週1セッションに閉じ込め、平日タスクはこの蒸留版を読むだけにする（CLAUDE.md §13）。
 >
-> **最終更新：** 2026-06-14（ライブ describe で全追跡オブジェクト（Account / Contact / Opportunity / matching__c / Employment_History__c / User）を再取得。選択肢値カタログを大幅拡充（Account・matching__c・Contact・Opportunity の新規 picklist 追加、Employment_History__c の picklist を初収録）。agents/salesforce.md の既定項目セット全フィールドの実在を確認済み（消えた／改名されたフィールドなし）。Territory__c / ProposablePositionMulti__c は各 100〜130件超のため引き続き全列挙しない（on-demand describe で確認）。）
+> **最終更新：** 2026-06-21（ライブ describe で全追跡オブジェクト（Account / Contact / Opportunity / matching__c / Employment_History__c / CompanyNews__c / User）を再取得。新規カスタムオブジェクト `CompanyNews__c`（企業ニュース）を検出・追加。既存オブジェクトの picklist 値・フィールドに変更なし。agents/salesforce.md の既定項目セット全フィールドの実在を確認済み（消えた／改名されたフィールドなし）。Territory__c / ProposablePositionMulti__c は各 100〜130件超のため引き続き全列挙しない（on-demand describe で確認）。）
 >
 > **週途中の鮮度フォールバック（重要）：** タスク中に選択肢値やフィールドが本ファイルと食い違って操作が失敗したら、**その1オブジェクトだけ** `salesforce_describe_object` でライブ確認して進める（本ファイル全体の再取得はしない）。差分は次回の週末リフレッシュが回収する。
 
@@ -27,6 +27,7 @@
 | `Opportunity` | 案件＝ポジション | salesforce.md ③ |
 | `matching__c` | パイプライン＝選考進捗（候補者×案件） | salesforce.md ④ |
 | `Employment_History__c` | 在籍履歴 | 必要時に都度 describe |
+| `CompanyNews__c` | 企業ニュース（Account に紐づく記事・プレスリリース等） | 必要時に都度 describe |
 
 ※ `slackv2__*` 等は連携・設定用で業務データではない（リフレッシュ対象外）。
 
@@ -34,7 +35,7 @@
 
 週末リフレッシュ（routine ④）が describe する範囲。org 全体は重いのでここで絞る。
 
-- **カスタムオブジェクト：** `QualifiedApiName LIKE '%__c'` で列挙済み（2026-06-14確認）。業務データを持つカスタムオブジェクト：`matching__c`（パイプライン）・`Employment_History__c`（在籍履歴）・`In_App_Checklist_Settings__c`（設定用、業務データなし）。`slackv2__*` 系（11件）は Slack 連携・設定用でリフレッシュ対象外。
+- **カスタムオブジェクト：** `QualifiedApiName LIKE '%__c'` で列挙済み（2026-06-21確認）。業務データを持つカスタムオブジェクト：`matching__c`（パイプライン）・`Employment_History__c`（在籍履歴）・`CompanyNews__c`（企業ニュース、2026-06-21新規検出）・`In_App_Checklist_Settings__c`（設定用、業務データなし）。`slackv2__*` 系（11件）は Slack 連携・設定用でリフレッシュ対象外。
 - **標準オブジェクト allowlist：** `Account` / `Contact` / `Opportunity` / `User`。
 
 ---
@@ -184,6 +185,15 @@ Notion パイプライン（`選考状況` status ＋ `リリース理由` selec
 
 #### `Employment_Type__c`（雇用形態）
 - `正社員` / `業務委託` / `役員` / `インターン` / `その他`
+
+---
+
+### CompanyNews__c の picklist（2026-06-21 新規追加）
+
+#### `Category__c`（カテゴリ）
+- `資金調達` / `IPO` / `M&A` / `上場廃止` / `TOB` / `MBO` / `経営統合` / `倒産` / `社長交代` / `業績修正` / `決算` / `新サービス` / `新機能` / `プレスリリース` / `CEO発信` / `note新着` / `ブログ` / `登壇` / `業務提携` / `マイルストーン`
+
+**主要フィールド（参考）：** `Account__c`（Account への参照）・`URL__c`（記事URL、必須）・`Published_Date__c`（公開日）・`Posted_At__c`（Slack投稿日）・`Summary__c`（3行サマリー）・`Pipeline_Notes__c`（パイプライン影響）。
 
 ---
 
