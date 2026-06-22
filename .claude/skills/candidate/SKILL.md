@@ -1,5 +1,7 @@
 ---
+name: candidate
 description: 候補者プロファイル md を作成・追記・同期する（agents/candidate-profile.md を読み込み）
+disable-model-invocation: true
 ---
 
 `agents/candidate-profile.md` を読み込んで、候補者プロファイルモードに入ってください。

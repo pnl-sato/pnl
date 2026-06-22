@@ -1,5 +1,7 @@
 ---
+name: candidate-mail
 description: 候補者宛メールを作成する（agents/candidate-mail.md を読み込み）
+disable-model-invocation: true
 ---
 
 `agents/candidate-mail.md` と `agents/style.md` を読み込んで、候補者連絡モードに入ってください。

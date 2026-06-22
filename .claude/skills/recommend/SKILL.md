@@ -1,5 +1,7 @@
 ---
+name: recommend
 description: 推薦文・推薦状を作成する（agents/client-writing.md を読み込み）
+disable-model-invocation: true
 ---
 
 `agents/client-writing.md` と `agents/style.md` を読み込んで、推薦文作成モードに入ってください。

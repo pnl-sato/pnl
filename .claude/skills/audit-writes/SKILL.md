@@ -1,4 +1,5 @@
 ---
+name: audit-writes
 description: このセッション自身の Craft/Notion 書き込み失敗を自己点検し台帳行を出力（prompts/self-audit-write-failures.md）
 ---
 

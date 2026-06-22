@@ -1,5 +1,7 @@
 ---
+name: scout
 description: スカウト文を作成する（agents/scout.md を読み込み）
+disable-model-invocation: true
 ---
 
 `agents/scout.md` と `agents/style.md` を読み込んで、スカウト文作成モードに入ってください。

@@ -7,6 +7,10 @@
       "mcp__craft__craft_write",
 
       "mcp__notion",
+      "mcp__Notion__notion-create-pages",
+      "mcp__Notion__notion-update-page",
+      "mcp__Notion__notion-create-comment",
+      "mcp__Notion__notion-duplicate-page",
       "mcp__b4464fc7-6c56-46c7-baf3-e43c58c75d5c",
       "mcp__b4464fc7-6c56-46c7-baf3-e43c58c75d5c__notion-create-pages",
       "mcp__b4464fc7-6c56-46c7-baf3-e43c58c75d5c__notion-update-page",
@@ -19,11 +23,21 @@
       "mcp__salesforce__salesforce_read_apex",
       "mcp__salesforce__salesforce_read_apex_trigger",
 
+      "mcp__Gmail__search_threads",
+      "mcp__Gmail__get_thread",
+      "mcp__Gmail__list_drafts",
+      "mcp__Gmail__list_labels",
       "mcp__5769bd94-192d-4a21-ad9d-f8de88bc7030__search_threads",
       "mcp__5769bd94-192d-4a21-ad9d-f8de88bc7030__get_thread",
       "mcp__5769bd94-192d-4a21-ad9d-f8de88bc7030__list_drafts",
       "mcp__5769bd94-192d-4a21-ad9d-f8de88bc7030__list_labels",
 
+      "mcp__Google_Drive__search_files",
+      "mcp__Google_Drive__read_file_content",
+      "mcp__Google_Drive__download_file_content",
+      "mcp__Google_Drive__get_file_metadata",
+      "mcp__Google_Drive__list_recent_files",
+      "mcp__Google_Drive__get_file_permissions",
       "mcp__70ca54f9-ff79-4dad-ac74-0c7d182c41d6__search_files",
       "mcp__70ca54f9-ff79-4dad-ac74-0c7d182c41d6__read_file_content",
       "mcp__70ca54f9-ff79-4dad-ac74-0c7d182c41d6__download_file_content",
@@ -31,6 +45,14 @@
       "mcp__70ca54f9-ff79-4dad-ac74-0c7d182c41d6__list_recent_files",
       "mcp__70ca54f9-ff79-4dad-ac74-0c7d182c41d6__get_file_permissions",
 
+      "mcp__Slack__slack_read_channel",
+      "mcp__Slack__slack_read_thread",
+      "mcp__Slack__slack_read_user_profile",
+      "mcp__Slack__slack_read_canvas",
+      "mcp__Slack__slack_search_channels",
+      "mcp__Slack__slack_search_users",
+      "mcp__Slack__slack_search_public",
+      "mcp__Slack__slack_search_public_and_private",
       "mcp__f9e68127-cb18-4257-9dfe-2377b812f5ac__slack_read_channel",
       "mcp__f9e68127-cb18-4257-9dfe-2377b812f5ac__slack_read_thread",
       "mcp__f9e68127-cb18-4257-9dfe-2377b812f5ac__slack_read_user_profile",
@@ -70,6 +92,15 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/hooks/write_failure_ledger.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/hooks/claude_md_size_guard.py\""
           }
         ]
       }

@@ -1,5 +1,7 @@
 ---
+name: client-mail
 description: クライアント向けメールを作成する（agents/client-writing.md を読み込み）
+disable-model-invocation: true
 ---
 
 `agents/client-writing.md` と `agents/style.md` を読み込んで、クライアント連絡モードに入ってください。
