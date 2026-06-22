@@ -165,3 +165,14 @@ LastModifiedDate, Notion_Page_ID__c
 **既定から外す：** `PLmemo__c`, `others__c`, `DropReasonDetail__c` の長文、
 ステージ通過の真偽フラグ群（`X3_P_L__c` 等）・段階別の通過日付（`X02_03__c` 等）。
 選考の細かい履歴・日付遷移を追うときだけ、必要なものを指定して追加取得する。
+
+---
+
+## ⑤ 書き込み（DML＝`salesforce_dml_records`）時の注意（2026-06 追記）
+
+読み込み中心の運用だが、プロファイル同期で Contact / matching__c を update することがある。実際に踏んだ落とし穴と回避策：
+
+- **read-only（数式・自動算出・ロールアップ）項目を update に含めない。** 含めると `INVALID_FIELD_FOR_INSERT_UPDATE`（"Unable to create/update fields: …"）で**そのレコード全体が失敗**する。実例：`Contact.Age__c` は生年月日からの算出項目で書き込み不可（年齢を変えたいときは元の生年月日項目を更新する）。エラーが出たら、メッセージに名指しされた項目だけ除いて再送すれば残りは通る。数式・ロールアップ系（matching__c の理論年収系など）も書き込み対象にしない。
+- **`records` は構造化した配列で渡す（巨大な生 JSON 文字列を一括で渡さない）。** 長文項目（`Summary__c`／`InterviewMemo__c`／`Tenshokujiku__c`／`PLmemo__c` 等）に日本語＋改行を載せた update を、ひとつの大きな JSON 文字列としてまとめて送ると **"could not be parsed as JSON"** で落ちやすい。`operation`／`objectName`／`records` を構造化フィールドで渡し、1レコードずつ・各項目を構造化値で入れる（本文中の改行は `\n` で入れる）と通る。
+- **長文項目は「上書き」。残したい既存値は自分で連結する。** SF の update は項目単位の置換なので、`Summary__c`／`InterviewMemo__c` 等へ追記したいときは、まず `salesforce_query_records` で**現値を取得 → 末尾に新ブロックを連結 → update** する（新文だけ入れると過去ログが消える）。プロファイル同期では区切り線＋日付見出しで追記すると履歴を追いやすい（実例：濱口里愛 2026-06-22 面談反映）。
+- **パイプライン更新は Notion と SF の二重更新が必須**（`agents/candidate-profile.md` §6・`sf_structure.md`「Notion 選考状況 ↔ matching__c マッピング」）。片方だけにしない。
