@@ -57,7 +57,7 @@ LastModifiedDate, Notion_Page_ID__c, Craft_Profile_URL_SY__c
 | Name | 氏名 |
 | furigana_lastname__c / furigana_firstname__c | 姓・名（ふりがな） |
 | CurrentPosition__c | 現職ポジション |
-| companycopy__c | 所属企業（テキスト） |
+| companycopy__c | 所属企業（テキスト）※参照用。更新時は `AccountId`（取引先）を変更する。`companycopy__c` は直接編集しない |
 | Email / MobilePhone | メール・携帯電話 |
 | Age__c | 年齢 |
 | CurrentSalary__c / ActualSalary__c | 現年収（選択／実数） |
