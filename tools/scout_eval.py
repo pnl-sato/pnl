@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Notion「スカウト評価ログ」DB への create / back-fill（NOTION_TOKEN 直叩き＝MCP 非依存）。
+"""Notion「送信ログ」DB への create / back-fill（NOTION_TOKEN 直叩き＝MCP 非依存）。
 
 役割（agents/scout-kit.md §4.5／§6.5）:
     未接触候補のスカウト適性評価を 1行=1評価 で蓄積する正本台帳への書き込み口。
@@ -49,7 +49,7 @@ API = "https://api.notion.com/v1"
 VERSION = "2022-06-28"
 JST = timezone(timedelta(hours=9))
 
-EVAL_DB = "42e00d7d5c7e4b09aa80d6c1cd4e55bf"   # スカウト評価ログ（database id）
+EVAL_DB = "42e00d7d5c7e4b09aa80d6c1cd4e55bf"   # 送信ログ（database id）
 
 JUDGES = {"A", "B", "C", "D"}
 PERSONAS = {"P1", "P2", "P3"}
