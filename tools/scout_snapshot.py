@@ -139,9 +139,9 @@ def main():
         a["send"] += n
         if d and d == today:
             a["today"] += n
-        if d and d >= week_start:
+        if d and d >= week_start and d <= today:
             a["week"] += n
-        if d and d >= month_start:
+        if d and d >= month_start and d <= today:
             a["month"] += n
 
     for name, a in agg.items():
